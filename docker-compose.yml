@@ -1,0 +1,23 @@
+# shelly-watcher – z.B. für Synology Container Manager (Projekt) oder `docker compose up -d`
+services:
+  shelly-watcher:
+    image: ghcr.io/peterhagelhof7-cmd/shelly-watcher:latest
+    container_name: shelly-watcher
+    # Host-Netz ist nötig für mDNS- und CoIoT-Multicast und damit der
+    # Container das LAN automatisch erkennt.
+    network_mode: host
+    restart: unless-stopped
+    mem_limit: 64m
+    environment:
+      TZ: Europe/Berlin
+      LISTEN: ":8080"             # Port der Weboberfläche
+      # SHELLY_PASSWORD: ""       # falls Shellys passwortgeschützt sind (Gen2+: Benutzer immer "admin")
+      # SHELLY_USER: "admin"      # Benutzername für Gen1-Geräte
+      # WEB_PASSWORD: ""          # schützt die Weboberfläche (Benutzer: WEB_USER, Standard "admin")
+      # SCAN_CIDRS: "192.168.1.0/24, 192.168.20.0/24"   # leer = LAN automatisch erkennen
+      # FW_CHECK_ONLINE: "true"   # Gen1-Firmwareliste von api.shelly.cloud laden
+    volumes:
+      - shelly-data:/data
+
+volumes:
+  shelly-data:

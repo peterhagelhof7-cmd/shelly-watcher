@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Shelly Watcher</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%233b6ef0'/%3E%3Cpath d='M9 17h6l-2 8 10-12h-6l2-6z' fill='white'/%3E%3C/svg%3E">
+<style>
+/* Farbschema wie home-central / esp-infoscreen (dunkelblau, Karten). */
+:root{--bg:#101830;--card:#1b2440;--field:#0d1428;--line:#33406a;--acc:#3b6ef0;--link:#8ab4f8;--muted:#9aa4c0;--nav:#28345c;--fg:#eee;--ok:#3fb27f;--warn:#e0a030;--bad:#d9534f;--sleep:#9a8cf0}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.45 system-ui,sans-serif;background:var(--bg);color:var(--fg)}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:14px 16px;max-width:1500px;margin:0 auto}
+h1{font-size:20px;margin:0}h1 small{color:var(--muted);font-weight:400;font-size:12px;margin-left:6px}
+h2{font-size:18px;margin:24px 0 10px}
+main{padding:0 16px 16px;max-width:1500px;margin:0 auto}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+.tile{background:var(--card);border-radius:12px;padding:12px 14px;cursor:pointer;border:2px solid transparent}
+.tile b{display:block;font-size:24px}.tile span{color:var(--link);font-size:13px}
+.tile.active{border-color:var(--acc)}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:14px 0 10px}
+input,button{font:inherit;font-size:14px;color:var(--fg);border-radius:8px;padding:8px 12px}
+input{background:var(--field);border:1px solid var(--line)}
+input[type=search]{flex:1;min-width:180px}
+button{cursor:pointer;border:0;background:var(--nav);color:var(--link)}
+button.primary{background:var(--acc);color:#fff}
+button:disabled{opacity:.6;cursor:default}
+.wrap{overflow-x:auto;background:var(--card);border-radius:12px;padding:4px 8px}
+table{border-collapse:collapse;width:100%;white-space:nowrap}
+th,td{padding:7px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{background:var(--card);font-weight:normal;cursor:pointer;user-select:none;font-size:13px;color:var(--muted)}
+th.sorted{color:var(--link)}
+tr:last-child td{border-bottom:0}
+tr.old td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
+td.mono,.mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px}
+.mute{color:var(--muted)}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
+.online{background:var(--ok)}.offline{background:var(--bad)}.sleeping{background:var(--sleep)}
+.badge{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:600;border:1px solid currentColor}
+.b-upd{color:var(--warn)}.b-beta{color:var(--muted)}.b-auth{color:#f0a0a0}.b-ok{color:var(--ok)}
+a{color:var(--link);text-decoration:none}a:hover{text-decoration:underline}
+.x{background:none;color:var(--muted);padding:0 4px}.x:hover{color:var(--bad)}
+.models{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+.model{background:var(--card);border-radius:12px;padding:12px 14px}
+.model b{display:block}.model .mono{color:var(--muted)}
+.fwrow{display:flex;justify-content:space-between;gap:8px;font-size:13px;border-top:1px solid var(--line);margin-top:4px;padding-top:4px}
+footer{color:var(--muted);font-size:12px;padding:16px;text-align:center}
+#msg{color:var(--link);font-size:13px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Shelly Watcher <small id="ver"></small></h1>
+  <div class="bar" style="margin:0">
+    <span id="msg"></span>
+    <button id="scan" class="primary">Jetzt scannen</button>
+    <a href="api/devices.csv"><button>CSV-Export</button></a>
+  </div>
+</header>
+<main>
+  <div class="tiles" id="tiles"></div>
+
+  <div class="bar">
+    <input type="search" id="q" placeholder="Suchen: Name, Modell, IP, MAC, Firmware …">
+    <form id="add" style="display:flex;gap:6px">
+      <input id="addip" placeholder="IP manuell hinzufügen" size="18" inputmode="decimal">
+      <button>Hinzufügen</button>
+    </form>
+  </div>
+
+  <div class="wrap">
+    <table>
+      <thead><tr id="head"></tr></thead>
+      <tbody id="rows"><tr><td class="mute">Lade …</td></tr></tbody>
+    </table>
+  </div>
+
+  <h2>Modelle &amp; Firmware-Stände</h2>
+  <div class="models" id="models"></div>
+</main>
+<footer id="foot"></footer>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+let data = {devices: []}, sortKey = "ip", sortDir = 1, filter = "all";
+
+const cols = [
+  ["status", "Status"], ["name", "Name"], ["model", "Modell"], ["gen", "Gen"],
+  ["fw", "Firmware"], ["upd", "Firmware-Status"], ["ip", "IP"], ["mac", "MAC"],
+  ["rssi", "WLAN"], ["uptime", "Laufzeit"], ["seen", "Zuletzt gesehen"], ["src", "Gefunden via"], ["x", ""]
+];
+const ipNum = ip => (ip || "").split(".").reduce((a, b) => a * 256 + (+b || 0), 0);
+const sortVal = {
+  status: d => d.status, name: d => (d.name || "").toLowerCase(), model: d => d.model_name || d.model,
+  gen: d => d.gen, fw: d => d.fw_version, upd: d => d.fw_outdated ? 0 : 1, ip: d => ipNum(d.ip),
+  mac: d => d.mac, rssi: d => d.rssi ?? -999, uptime: d => d.uptime || 0, seen: d => d.last_seen, src: d => d.sources.join()
+};
+
+function ago(t) {
+  const s = (Date.parse(data.now) - Date.parse(t)) / 1000;
+  if (!(s >= 0)) return "–";
+  if (s < 90) return "gerade eben";
+  if (s < 5400) return Math.round(s / 60) + " min";
+  if (s < 172800) return Math.round(s / 3600) + " h";
+  return Math.round(s / 86400) + " Tage";
+}
+function dur(s) {
+  if (!s) return "";
+  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  return d ? `${d} T ${h} h` : h ? `${h} h ${m} min` : `${m} min`;
+}
+const stText = {online: "online", offline: "offline", sleeping: "schläft"};
+const authBadge = d =>
+  d.auth_status === "missing" ? '<span class="badge b-auth" title="Gerät hat Passwortschutz, SHELLY_PASSWORD ist nicht gesetzt – Modell und Firmware sind trotzdem erfasst">Passwort fehlt</span>' :
+  d.auth_status === "failed" ? '<span class="badge b-auth" title="SHELLY_PASSWORD passt nicht zu diesem Gerät">Passwort falsch</span>' : "";
+
+const srcText = {"gerät": "laut Gerät", "shelly": "laut Shelly-Firmwareliste", "netz": "ein anderes Gerät dieses Modells im Netz hat sie bereits"};
+function fwState(d) {
+  if (d.fw_outdated) return `<span class="badge b-upd" title="Neueste bekannte Version ${esc(d.fw_latest)} (${esc(srcText[d.fw_latest_src] || d.fw_latest_src)})">veraltet → ${esc(d.fw_latest)}</span>
+    <div class="mute" style="font-size:11px">${esc(srcText[d.fw_latest_src] || "")}</div>`;
+  if (!d.fw_version) return '<span class="mute">?</span>';
+  if (d.auth_status === "missing" || d.auth_status === "failed") return '<span class="mute" title="Ohne Passwort kann das Gerät nicht nach Updates gefragt werden">aktuell?</span>';
+  return '<span class="badge b-ok">aktuell</span>';
+}
+
+const filters = {
+  all: ["Geräte", () => true],
+  online: ["online", d => d.status === "online"],
+  sleeping: ["schlafend", d => d.status === "sleeping"],
+  offline: ["offline", d => d.status === "offline"],
+  upd: ["Firmware veraltet", d => d.fw_outdated],
+  auth: ["Passwort fehlt/falsch", d => d.auth_status === "missing" || d.auth_status === "failed"],
+};
+
+function render() {
+  const devs = data.devices;
+  $("#tiles").innerHTML = Object.entries(filters).map(([k, [label, fn]]) =>
+    `<div class="tile ${filter === k ? "active" : ""}" data-f="${k}"><b>${devs.filter(fn).length}</b><span>${label}</span></div>`).join("");
+
+  $("#head").innerHTML = cols.map(([k, l]) =>
+    `<th data-k="${k}" class="${sortKey === k ? "sorted" : ""}">${l}${sortKey === k ? (sortDir > 0 ? " ▲" : " ▼") : ""}</th>`).join("");
+
+  const q = $("#q").value.trim().toLowerCase();
+  let list = devs.filter(filters[filter][1]).filter(d => !q ||
+    [d.name, d.model, d.model_name, d.app, d.ip, d.mac, d.id, d.fw_version, d.fw, d.ssid].join(" ").toLowerCase().includes(q));
+  const f = sortVal[sortKey] || sortVal.ip;
+  list.sort((a, b) => (f(a) > f(b) ? 1 : f(a) < f(b) ? -1 : 0) * sortDir);
+
+  $("#rows").innerHTML = list.length ? list.map(d => `<tr title="${esc(d.last_error)}" class="${d.fw_outdated ? "old" : ""}">
+    <td><span class="dot ${d.status}"></span>${stText[d.status] || d.status}</td>
+    <td>${esc(d.name) || '<span class="mute">–</span>'}<div class="mute mono">${esc(d.id)}</div></td>
+    <td>${esc(d.model_name) || '<span class="mute">unbekannt</span>'}<div class="mute mono">${esc(d.model)}</div></td>
+    <td>${d.gen || ""}</td>
+    <td class="mono">${esc(d.fw_version)}<div class="mute" style="font-size:11px">${esc(d.fw)}</div></td>
+    <td>${fwState(d)}${d.fw_beta ? `<div><span class="badge b-beta">Beta ${esc(d.fw_beta)}</span></div>` : ""} ${authBadge(d)}</td>
+    <td class="mono">${d.ip ? `<a href="http://${esc(d.ip)}/" target="_blank" rel="noopener">${esc(d.ip)}</a>` : ""}</td>
+    <td class="mono">${esc(d.mac.match(/../g)?.join(":"))}</td>
+    <td>${d.rssi != null ? d.rssi + " dBm" : ""}<div class="mute">${esc(d.ssid)}</div>${d.battery != null ? `<div class="mute">🔋 ${d.battery} %</div>` : ""}</td>
+    <td>${dur(d.uptime)}</td>
+    <td>${ago(d.last_seen)}</td>
+    <td class="mute">${d.sources.map(esc).join(", ")}</td>
+    <td><button class="x" data-del="${esc(d.mac)}" title="Gerät vergessen">✕</button></td>
+  </tr>`).join("") : `<tr><td colspan="${cols.length}" class="mute">${devs.length ? "Keine Treffer." : "Noch keine Geräte gefunden – der erste Scan kann ein paar Minuten dauern."}</td></tr>`;
+
+  // Modellübersicht: welche Firmware-Stände gibt es pro Modell?
+  const byModel = {};
+  for (const d of devs) {
+    const k = d.model || "?";
+    const m = (byModel[k] ??= {name: d.model_name, gen: d.gen, fw: {}, old: {}, n: 0});
+    m.n++;
+    m.fw[d.fw_version || "?"] = (m.fw[d.fw_version || "?"] || 0) + 1;
+    if (d.fw_outdated) m.old[d.fw_version] = d.fw_latest;
+  }
+  $("#models").innerHTML = Object.entries(byModel).sort((a, b) => (a[1].name || a[0]).localeCompare(b[1].name || b[0]))
+    .map(([code, m]) => `<div class="model"><b>${esc(m.name || "Unbekanntes Modell")} <span class="mute">× ${m.n}</span></b>
+      <span class="mono">${esc(code)} · Gen ${m.gen || "?"}</span>
+      ${Object.entries(m.fw).sort().map(([v, n]) => `<div class="fwrow"><span class="mono">${esc(v)}${m.old[v] ? ` <span class="badge b-upd">veraltet → ${esc(m.old[v])}</span>` : ""}</span><span>${n}</span></div>`).join("")}</div>`).join("");
+
+  $("#msg").textContent = data.scanning ? "Scan läuft …" : data.last_scan && !data.last_scan.startsWith("0001")
+    ? "Letzter Scan: " + new Date(data.last_scan).toLocaleTimeString("de-DE") : "";
+  $("#scan").disabled = data.scanning;
+  $("#ver").textContent = data.version || "";
+  $("#foot").textContent = (data.networks?.length ? "Netze: " + data.networks.join(", ") + " · " : "") +
+    (data.shelly_password_set ? "Shelly-Passwort gesetzt" : "kein Shelly-Passwort gesetzt") + " · " +
+    (data.fw_list_fetched && !data.fw_list_fetched.startsWith("0001") ? "Gen1-Firmwareliste vom " + new Date(data.fw_list_fetched).toLocaleString("de-DE")
+      : data.fw_list_error ? "Gen1-Firmwareliste nicht abrufbar" : "Gen1-Firmwareliste deaktiviert/ausstehend");
+}
+
+async function load() {
+  try {
+    const r = await fetch("api/devices", {cache: "no-store"});
+    if (r.ok) { data = await r.json(); render(); }
+  } catch (e) { $("#msg").textContent = "Server nicht erreichbar"; }
+}
+
+$("#head").addEventListener("click", e => {
+  const k = e.target.closest("th")?.dataset.k;
+  if (!k || k === "x") return;
+  sortDir = sortKey === k ? -sortDir : 1; sortKey = k; render();
+});
+$("#tiles").addEventListener("click", e => {
+  const f = e.target.closest(".tile")?.dataset.f;
+  if (f) { filter = filter === f ? "all" : f; render(); }
+});
+$("#q").addEventListener("input", render);
+$("#rows").addEventListener("click", async e => {
+  const mac = e.target.dataset.del;
+  if (!mac) return;
+  await fetch("api/devices/" + encodeURIComponent(mac), {method: "DELETE"});
+  load();
+});
+$("#scan").addEventListener("click", async () => {
+  $("#scan").disabled = true;
+  const r = await fetch("api/scan", {method: "POST"});
+  $("#msg").textContent = r.status === 409 ? "Scan läuft bereits" : "Scan gestartet …";
+  setTimeout(load, 1500);
+});
+$("#add").addEventListener("submit", async e => {
+  e.preventDefault();
+  const ip = $("#addip").value.trim();
+  if (!ip) return;
+  $("#msg").textContent = "Frage " + ip + " ab …";
+  const r = await fetch("api/probe", {method: "POST", body: new URLSearchParams({ip})});
+  $("#msg").textContent = r.ok ? ip + " hinzugefügt" : await r.text();
+  if (r.ok) $("#addip").value = "";
+  load();
+});
+
+load();
+setInterval(load, 15000);
+</script>
+</body>
+</html>
