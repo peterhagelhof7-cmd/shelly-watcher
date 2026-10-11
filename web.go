@@ -21,6 +21,8 @@ type Web struct {
 	pr  *Prober
 	sc  *Scanner
 	ref *FWRef
+	up  *Updater
+	ctx context.Context // lebt so lange wie der Watcher (für Updates im Hintergrund)
 }
 
 func (w *Web) handler() http.Handler {
@@ -31,6 +33,8 @@ func (w *Web) handler() http.Handler {
 	mux.HandleFunc("POST /api/scan", w.scan)
 	mux.HandleFunc("POST /api/probe", w.probe)
 	mux.HandleFunc("GET /api/devices/{mac}", w.device)
+	mux.HandleFunc("POST /api/devices/{mac}/update", w.startUpdate)
+	mux.HandleFunc("PUT /api/devices/{mac}/autoupdate", w.setAutoUpdate)
 	mux.HandleFunc("GET /api/settings", w.settingsGet)
 	mux.HandleFunc("PUT /api/settings", w.settingsPut)
 	mux.HandleFunc("GET /api/info", w.info)
@@ -71,11 +75,12 @@ func (w *Web) devices(rw http.ResponseWriter, _ *http.Request) {
 		HasPasswd bool      `json:"shelly_password_set"`
 		FWListAt  time.Time `json:"fw_list_fetched"`
 		FWListErr string    `json:"fw_list_error,omitempty"`
+		AutoUpd   bool      `json:"auto_update"`
 		WifiGood  int       `json:"wifi_good"`
 		WifiOK    int       `json:"wifi_ok"`
 	}{Version: version, Now: time.Now(), Devices: w.st.list(), Scanning: running, LastScan: last,
 		Networks: nets, HasPasswd: w.cfg.Get().ShellyPassword != "",
-		WifiGood: w.cfg.Get().WifiGood, WifiOK: w.cfg.Get().WifiOK}
+		WifiGood: w.cfg.Get().WifiGood, WifiOK: w.cfg.Get().WifiOK, AutoUpd: w.cfg.Get().AutoUpdate}
 	resp.FWListAt, resp.FWListErr = w.ref.info()
 	rw.Header().Set("Content-Type", "application/json")
 	rw.Header().Set("Cache-Control", "no-store")
@@ -173,7 +178,58 @@ func (w *Web) device(rw http.ResponseWriter, r *http.Request) {
 		Now       time.Time `json:"now"`
 		WifiGood  int       `json:"wifi_good"`
 		WifiOK    int       `json:"wifi_ok"`
-	}{d, liveErr, time.Now(), c.WifiGood, c.WifiOK})
+		AutoUpd   bool      `json:"auto_update"`
+		AutoFrom  int       `json:"auto_update_from"`
+		AutoTo    int       `json:"auto_update_to"`
+	}{d, liveErr, time.Now(), c.WifiGood, c.WifiOK, c.AutoUpdate, c.AutoUpdateFrom, c.AutoUpdateTo})
+}
+
+// startUpdate: Firmware-Update für ein Gerät sofort auslösen (unabhängig
+// vom Zeitfenster und von der Ausnahme). Läuft im Hintergrund.
+func (w *Web) startUpdate(rw http.ResponseWriter, r *http.Request) {
+	d, ok := w.st.get(r.PathValue("mac"))
+	switch {
+	case !ok:
+		http.NotFound(rw, r)
+		return
+	case d.Status != "online" || d.IP == "":
+		http.Error(rw, "Gerät ist nicht online", http.StatusConflict)
+		return
+	case d.FWStable == "" || cmpVersion(d.FWStable, d.FWVersion) <= 0:
+		http.Error(rw, "Das Gerät meldet kein verfügbares Update", http.StatusConflict)
+		return
+	case d.AuthStatus == "missing" || d.AuthStatus == "failed":
+		http.Error(rw, "Ohne gültiges Shelly-Passwort kein Update möglich", http.StatusConflict)
+		return
+	}
+	w.up.mu.Lock()
+	busy := w.up.busy
+	w.up.mu.Unlock()
+	if busy {
+		http.Error(rw, errBusy.Error(), http.StatusConflict)
+		return
+	}
+	ctx := w.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	go func() { _ = w.up.update(ctx, d, true) }()
+	rw.WriteHeader(http.StatusAccepted)
+}
+
+func (w *Web) setAutoUpdate(rw http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if json.NewDecoder(http.MaxBytesReader(rw, r.Body, 1024)).Decode(&req) != nil {
+		http.Error(rw, "ungültige Anfrage", http.StatusBadRequest)
+		return
+	}
+	if !w.st.setAutoUpdateOff(r.PathValue("mac"), !req.Enabled) {
+		http.NotFound(rw, r)
+		return
+	}
+	rw.WriteHeader(http.StatusNoContent)
 }
 
 func (w *Web) forget(rw http.ResponseWriter, r *http.Request) {

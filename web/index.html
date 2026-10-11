@@ -160,6 +160,7 @@ const authBadge = d =>
 
 const srcText = {"gerät": "laut Gerät", "shelly": "laut Shelly-Firmwareliste", "netz": "ein anderes Gerät dieses Modells im Netz hat sie bereits"};
 function fwState(d) {
+  if (d.last_update?.state === "running") return `<span class="badge b-upd">Update läuft → ${esc(d.last_update.to)}</span>`;
   if (d.fw_outdated) return `<span class="badge b-upd" title="Neueste bekannte Version ${esc(d.fw_latest)} (${esc(srcText[d.fw_latest_src] || d.fw_latest_src)})">veraltet → ${esc(d.fw_latest)}</span>
     <div class="mute" style="font-size:11px">${esc(srcText[d.fw_latest_src] || "")}</div>`;
   if (!d.fw_version) return '<span class="mute">?</span>';
@@ -271,8 +272,34 @@ async function loadDetail() {
     const r = await fetch("api/devices/" + encodeURIComponent(mac), {cache: "no-store"});
     if (mac !== detailMac) return; // inzwischen weiternavigiert
     if (r.status === 404) { $("#detail").innerHTML = '<p>Gerät nicht gefunden. <a href="#/">Zur Übersicht</a></p>'; return; }
-    if (r.ok) renderDetail(await r.json());
+    if (r.ok && !$("#updnow")?.dataset.armed) renderDetail(await r.json());
   } catch (e) { /* nächster Versuch beim nächsten Intervall */ }
+}
+
+function lastUpdateText(u) {
+  if (!u) return "";
+  const when = new Date(u.at).toLocaleString("de-DE");
+  const how = u.manual ? "manuell" : "automatisch";
+  if (u.state === "running") return `läuft seit ${when}: ${esc(u.from)} → ${esc(u.to)}`;
+  if (u.state === "ok") return `<span class="ok">erfolgreich</span> ${when} (${how}): ${esc(u.from)} → ${esc(u.to)}`;
+  return `<span class="err">fehlgeschlagen</span> ${when} (${how}): ${esc(u.detail)}`;
+}
+const canUpdate = d => d.status === "online" && !!d.fw_update && d.last_update?.state !== "running" &&
+  d.auth_status !== "missing" && d.auth_status !== "failed";
+
+function bindDetail(d) {
+  $("#au")?.addEventListener("change", async e => {
+    const r = await fetch(`api/devices/${d.mac}/autoupdate`, {method: "PUT", headers: {"Content-Type": "application/json"}, body: JSON.stringify({enabled: e.target.checked})});
+    $("#updmsg").innerHTML = r.ok ? (e.target.checked ? "Gerät wird automatisch aktualisiert." : "Gerät ist vom Auto-Update ausgenommen.") : '<span class="err">Speichern fehlgeschlagen</span>';
+  });
+  $("#updnow")?.addEventListener("click", async e => {
+    const b = e.target;
+    if (!b.dataset.armed) { b.dataset.armed = "1"; b.textContent = "Wirklich aktualisieren? Nochmal klicken"; return; }
+    b.disabled = true;
+    const r = await fetch(`api/devices/${d.mac}/update`, {method: "POST"});
+    $("#updmsg").innerHTML = r.ok ? "Update gestartet – dauert meist 1–3 Minuten." : '<span class="err">' + esc(await r.text()) + "</span>";
+    setTimeout(loadDetail, 1500);
+  });
 }
 
 function renderDetail(d) {
@@ -318,7 +345,14 @@ function renderDetail(d) {
         ["Build", `<span class="mono mute" style="font-size:11px">${esc(d.fw)}</span>`],
         ["Status", fwState(d)],
         ["Beta verfügbar", esc(d.fw_beta)],
-      ])}</div>
+        ["Auto-Update", d.sleepy ? '<span class="mute">nicht für Akkugeräte</span>'
+          : `<label class="chk" style="padding:0"><input type="checkbox" id="au" ${d.auto_update_off ? "" : "checked"}> für dieses Gerät</label>
+             <div class="hint" style="margin-top:2px">${d.auto_update ? `aktiv, ${d.auto_update_from}–${d.auto_update_to} Uhr` : 'in den <a href="#/einstellungen">Einstellungen</a> ausgeschaltet'}</div>`],
+        ["Letztes Update", lastUpdateText(d.last_update)],
+      ])}
+      ${canUpdate(d) ? `<button class="primary" id="updnow" style="margin-top:12px">Jetzt auf ${esc(d.fw_update)} aktualisieren</button>
+        <div class="hint">Das Gerät startet dabei neu, angeschlossene Verbraucher können kurz schalten.</div>` : ""}
+      <div id="updmsg" class="hint"></div></div>
       <div class="card"><h3>Netzwerk</h3>${kv(d.wired ? [["Verbindung", '<span class="w-good">LAN-Kabel</span>']] : [
         ["WLAN", esc(d.ssid)],
         ["Signal", q ? wifiCell(d) : "unbekannt"],
@@ -331,6 +365,7 @@ function renderDetail(d) {
         ["Konto", '<span class="mute">lokal nicht lesbar</span>'],
       ])}<div class="hint">Mit welchem Shelly-Konto ein Gerät verknüpft ist, gibt das Gerät über seine lokale Schnittstelle nicht preis. Der Cloud-Server zeigt, auf welchem Shelly-Server das Konto liegt.</div></div>
     </div>`;
+  bindDetail(d);
 }
 
 // ---------- Einstellungen ----------
@@ -348,6 +383,9 @@ const fields = [
   {k: "shelly_password", label: "Passwort", type: "secret", src: "shelly_password", help: () => "Ein gemeinsames Passwort für alle Shellys."},
   {sec: "Firmware"},
   {k: "fw_check_online", label: "Gen1-Firmwareliste laden", type: "bool", help: () => "Lädt täglich die aktuellen Gen1-Versionen von api.shelly.cloud, damit veraltete Firmware auch bei Shellys ohne Internet erkannt wird."},
+  {k: "auto_update", label: "Automatisch aktualisieren", type: "bool", help: () => "Installiert die neueste stabile Firmware, sobald ein Gerät sie meldet – nie Beta. Ein Gerät nach dem anderen, nur im Zeitfenster. Das Gerät startet dabei neu (angeschlossene Verbraucher können kurz schalten) und braucht Internet, um die Firmware vom Shelly-Server zu laden. Akkugeräte und Geräte mit Ausnahme (Detailseite) werden ausgelassen."},
+  {k: "auto_update_from", label: "Zeitfenster von", type: "number", unit: "Uhr", min: 0, max: 23, help: () => "Beginn (volle Stunde)."},
+  {k: "auto_update_to", label: "Zeitfenster bis", type: "number", unit: "Uhr", min: 0, max: 23, help: () => "Ende (volle Stunde, exklusiv). Über Mitternacht ist erlaubt (z.B. 23 bis 5); gleiche Werte = ganztägig."},
   {sec: "Anzeige"},
   {k: "wifi_good", label: "WLAN gut ab", type: "number", unit: "dBm", min: -100, max: -20, help: () => "Grün in der Übersicht."},
   {k: "wifi_ok", label: "WLAN ausreichend ab", type: "number", unit: "dBm", min: -100, max: -20, help: () => "Gelb; schwächer ist rot (schlecht)."},
@@ -369,6 +407,7 @@ async function loadSettings() {
 function startText(f) {
   const v = settings.start[f.k];
   if (f.type === "bool") return v ? "an" : "aus";
+  if (f.unit === "Uhr") return v + " Uhr";
   if (f.k === "scan_cidrs") return v || "automatisch";
   return v === "" ? "leer" : v + (f.unit ? " " + f.unit : "");
 }

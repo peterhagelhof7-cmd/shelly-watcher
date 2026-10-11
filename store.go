@@ -31,18 +31,21 @@ type Device struct {
 	AuthEnable bool   `json:"auth_enabled"`
 	AuthStatus string `json:"auth_status"` // none | ok | missing | failed
 
-	SSID     string    `json:"ssid,omitempty"`
-	RSSI     *int      `json:"rssi,omitempty"`
-	Uptime   int64     `json:"uptime,omitempty"`
-	Battery  *int      `json:"battery,omitempty"`
-	Cloud    *bool     `json:"cloud,omitempty"`
-	Sleepy   bool      `json:"sleepy"`
-	Wired    bool      `json:"wired,omitempty"` // per LAN-Kabel statt WLAN
-	Detail   *Detail   `json:"detail,omitempty"`
-	Sources  []string  `json:"sources"`
-	FirstSee time.Time `json:"first_seen"`
-	LastSeen time.Time `json:"last_seen"`
-	LastErr  string    `json:"last_error,omitempty"`
+	SSID    string  `json:"ssid,omitempty"`
+	RSSI    *int    `json:"rssi,omitempty"`
+	Uptime  int64   `json:"uptime,omitempty"`
+	Battery *int    `json:"battery,omitempty"`
+	Cloud   *bool   `json:"cloud,omitempty"`
+	Sleepy  bool    `json:"sleepy"`
+	Wired   bool    `json:"wired,omitempty"` // per LAN-Kabel statt WLAN
+	Detail  *Detail `json:"detail,omitempty"`
+
+	AutoUpdateOff bool        `json:"auto_update_off,omitempty"` // Ausnahme vom Auto-Update
+	LastUpdate    *UpdateInfo `json:"last_update,omitempty"`
+	Sources       []string    `json:"sources"`
+	FirstSee      time.Time   `json:"first_seen"`
+	LastSeen      time.Time   `json:"last_seen"`
+	LastErr       string      `json:"last_error,omitempty"`
 
 	// berechnet bei jeder Ausgabe
 	Status      string `json:"status"`                  // online | offline | sleeping
@@ -198,6 +201,29 @@ func (s *Store) setIP(d *Device, ip string) {
 		}
 	}
 	d.IP = ip
+}
+
+// setUpdate speichert den Stand des letzten Update-Versuchs.
+func (s *Store) setUpdate(mac string, info UpdateInfo) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if d, ok := s.devs[normMAC(mac)]; ok {
+		i := info
+		d.LastUpdate = &i
+		s.dirty = true
+	}
+}
+
+// setAutoUpdateOff nimmt ein Gerät vom automatischen Update aus (oder wieder auf).
+func (s *Store) setAutoUpdateOff(mac string, off bool) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d, ok := s.devs[normMAC(mac)]
+	if ok {
+		d.AutoUpdateOff = off
+		s.dirty = true
+	}
+	return ok
 }
 
 // macAt liefert die MAC des Geräts, das unter dieser IP geführt wird.

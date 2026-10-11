@@ -34,6 +34,9 @@ type settingsValues struct {
 	MDNS          bool   `json:"mdns"`
 	CoIoT         bool   `json:"coiot"`
 	FWCheckOnline bool   `json:"fw_check_online"`
+	AutoUpdate    bool   `json:"auto_update"`
+	AutoFrom      int    `json:"auto_update_from"`
+	AutoTo        int    `json:"auto_update_to"`
 	WifiGood      int    `json:"wifi_good"`
 	WifiOK        int    `json:"wifi_ok"`
 	ShellyUser    string `json:"shelly_user"`
@@ -46,6 +49,7 @@ func valuesOf(c *Config) settingsValues {
 		ScanCIDRs: c.ScanCIDRsRaw, ScanMinutes: int(c.ScanInterval / time.Minute),
 		PollSeconds: int(c.PollInterval / time.Second), SleepyHours: int(c.SleepyOfflineAfter / time.Hour),
 		MDNS: c.MDNS, CoIoT: c.CoIoT, FWCheckOnline: c.FWCheckOnline, WifiGood: c.WifiGood, WifiOK: c.WifiOK,
+		AutoUpdate: c.AutoUpdate, AutoFrom: c.AutoUpdateFrom, AutoTo: c.AutoUpdateTo,
 		ShellyUser: c.ShellyUser, WebUser: c.WebUser, Debug: c.Debug,
 	}
 }
@@ -76,6 +80,7 @@ func (w *Web) settingsGet(rw http.ResponseWriter, _ *http.Request) {
 		"sleepy_hours": ov.SleepyOfflineAfter != nil, "mdns": ov.MDNS != nil, "coiot": ov.CoIoT != nil,
 		"fw_check_online": ov.FWCheckOnline != nil, "wifi_good": ov.WifiGood != nil, "wifi_ok": ov.WifiOK != nil,
 		"shelly_user": ov.ShellyUser != nil, "web_user": ov.WebUser != nil, "debug": ov.Debug != nil,
+		"auto_update": ov.AutoUpdate != nil, "auto_update_from": ov.AutoUpdateFrom != nil, "auto_update_to": ov.AutoUpdateTo != nil,
 	} {
 		if set {
 			v.Overridden = append(v.Overridden, k)
@@ -205,6 +210,12 @@ func applySetting(ov *Overrides, key string, raw json.RawMessage) error {
 		return boolean(&ov.FWCheckOnline)
 	case "debug":
 		return boolean(&ov.Debug)
+	case "auto_update":
+		return boolean(&ov.AutoUpdate)
+	case "auto_update_from":
+		return integer(&ov.AutoUpdateFrom)
+	case "auto_update_to":
+		return integer(&ov.AutoUpdateTo)
 	case "wifi_good":
 		return integer(&ov.WifiGood)
 	case "wifi_ok":

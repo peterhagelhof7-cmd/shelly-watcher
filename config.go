@@ -31,6 +31,9 @@ type Config struct {
 	SleepyOfflineAfter time.Duration
 	SkipIfaces         []string
 	Debug              bool
+	AutoUpdate         bool   // Firmware automatisch aktualisieren
+	AutoUpdateFrom     int    // Zeitfenster, Stunde von (inkl.)
+	AutoUpdateTo       int    // Zeitfenster, Stunde bis (exkl.)
 	WifiGood           int    // RSSI ab dem das WLAN "gut" ist
 	WifiOK             int    // RSSI ab dem das WLAN "ausreichend" ist
 	ScanCIDRsRaw       string // wie eingegeben, für die Einstellungsseite
@@ -57,6 +60,9 @@ func loadConfig() *Config {
 		SleepyOfflineAfter: envDur("SLEEPY_OFFLINE_AFTER", 26*time.Hour),
 		SkipIfaces:         strings.Split(env("SKIP_IFACES", "docker,br-,veth,virbr,vEthernet,lxc,cni,flannel,tun,tap,wg,zt"), ","),
 		Debug:              envBool("DEBUG", false),
+		AutoUpdate:         envBool("AUTO_UPDATE", false),
+		AutoUpdateFrom:     envInt("AUTO_UPDATE_FROM", 3),
+		AutoUpdateTo:       envInt("AUTO_UPDATE_TO", 5),
 		WifiGood:           envInt("WIFI_GOOD", -67),
 		WifiOK:             envInt("WIFI_OK", -79),
 		ScanCIDRsRaw:       os.Getenv("SCAN_CIDRS"),
@@ -108,6 +114,8 @@ func (c *Config) validate() error {
 		return errors.New("Abfrage-Intervall muss mindestens 10 Sekunden sein")
 	case c.SleepyOfflineAfter < time.Hour:
 		return errors.New("Offline-Grenze für Akkugeräte muss mindestens 1 Stunde sein")
+	case c.AutoUpdateFrom < 0 || c.AutoUpdateFrom > 23 || c.AutoUpdateTo < 0 || c.AutoUpdateTo > 23:
+		return errors.New("Update-Zeitfenster: Stunden von 0 bis 23")
 	case c.WifiGood > -20 || c.WifiOK < -100 || c.WifiOK >= c.WifiGood:
 		return errors.New("WLAN-Grenzen: es muss gelten -100 ≤ ausreichend < gut ≤ -20 dBm")
 	}

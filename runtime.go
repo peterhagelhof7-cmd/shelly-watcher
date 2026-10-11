@@ -42,6 +42,9 @@ type Overrides struct {
 	MDNS               *bool   `json:"mdns,omitempty"`
 	CoIoT              *bool   `json:"coiot,omitempty"`
 	FWCheckOnline      *bool   `json:"fw_check_online,omitempty"`
+	AutoUpdate         *bool   `json:"auto_update,omitempty"`
+	AutoUpdateFrom     *int    `json:"auto_update_from,omitempty"`
+	AutoUpdateTo       *int    `json:"auto_update_to,omitempty"`
 	WifiGood           *int    `json:"wifi_good,omitempty"`
 	WifiOK             *int    `json:"wifi_ok,omitempty"`
 	ShellyUser         *string `json:"shelly_user,omitempty"`
@@ -174,6 +177,13 @@ func (r *Runtime) build(ov Overrides) (*Config, error) {
 	setB(&c.CoIoT, ov.CoIoT)
 	setB(&c.FWCheckOnline, ov.FWCheckOnline)
 	setB(&c.Debug, ov.Debug)
+	setB(&c.AutoUpdate, ov.AutoUpdate)
+	if ov.AutoUpdateFrom != nil {
+		c.AutoUpdateFrom = *ov.AutoUpdateFrom
+	}
+	if ov.AutoUpdateTo != nil {
+		c.AutoUpdateTo = *ov.AutoUpdateTo
+	}
 	if ov.WifiGood != nil {
 		c.WifiGood = *ov.WifiGood
 	}

@@ -86,7 +86,9 @@ func main() {
 		}
 	}()
 
-	web := &Web{cfg: rt, st: st, pr: pr, sc: sc, ref: ref}
+	up := newUpdater(rt, st, pr)
+	go up.run(ctx)
+	web := &Web{cfg: rt, st: st, pr: pr, sc: sc, ref: ref, up: up, ctx: ctx}
 	srv := &http.Server{Addr: cfg.Listen, Handler: web.handler(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()

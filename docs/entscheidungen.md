@@ -78,3 +78,22 @@ Laufendes Log nicht offensichtlicher Entscheidungen, neueste unten.
 **Kein `confirm()`-Dialog** beim Entfernen eines Passworts. Stattdessen bestätigt ein zweiter Klick. Das ist robuster und blockiert die Seite nicht.
 
 **Image-Tags: `latest` nur für Releases.** Bis 1.0.0 setzte jeder Push auf `main` `latest`. Das Synology-Script aktualisiert aber wöchentlich `:latest` und hätte damit jeden Zwischenstand installiert. Jetzt gilt: `latest` und `X.Y.Z`/`X.Y` nur bei einem Tag `vX.Y.Z`, `main` erzeugt `edge`.
+
+## 2026-10-11 – Automatische Firmware-Updates
+
+**Umsetzung über die lokalen Update-Befehle** der Geräte: Gen1 `/ota?update=true`, Gen2+ `Shelly.Update` mit `stage: "stable"`. Das Gerät lädt die Firmware selbst vom Shelly-Server. Der Watcher liefert keine Firmware aus. Geräte ohne Internetzugang melden ohnehin kein Update und werden deshalb nicht versucht.
+
+**Ausgelöst wird nur, was das Gerät selbst als verfügbare stabile Version meldet** (`FWStable`), nicht die Referenz aus Gen1-Liste oder Netzvergleich. Nur das Gerät weiß, was es tatsächlich installieren kann.
+
+**Sicherheitsnetz, weil ein Update neu startet und schalten kann:**
+- Standard aus.
+- Zeitfenster, Standard 3–5 Uhr, Fenster über Mitternacht möglich.
+- Immer nur ein Update gleichzeitig. Gewartet wird, bis das Gerät mit höherer Version antwortet, höchstens 10 min.
+- Nach einem Fehlschlag 24 h Pause je Gerät.
+- Ausnahmen pro Gerät.
+- Akkugeräte und Geräte ohne gültiges Passwort werden ausgelassen.
+- Nie Beta.
+
+**Manuelles Update auf der Detailseite** ignoriert Zeitfenster und Ausnahme bewusst, verlangt aber einen zweiten Klick als Bestätigung. Ein `confirm()`-Dialog würde die Seite blockieren.
+
+**Getestet** mit simulierten Gen1- und Gen2-Geräten (Unit-Tests: Erfolg, Fehlschlag mit Pause, Ausschlussgründe, Zeitfenster und Schalter, API) und einem Durchlauf im Browser gegen ein simuliertes Plus 2PM. An echten Geräten ist es noch ungetestet.

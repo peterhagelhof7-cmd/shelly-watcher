@@ -155,6 +155,18 @@ Ein Gerät gilt als **veraltet**, wenn seine Firmware älter ist als die neueste
 
 Beta-Versionen zählen nie als Referenz. In der Oberfläche gibt es dafür die Kachel bzw. den Filter „Firmware veraltet“, und die Modellübersicht zeigt pro Modell alle vorhandenen Firmware-Stände und markiert die veralteten.
 
+## Automatische Firmware-Updates
+
+Optional aktualisiert der Watcher alle Shellys automatisch auf die neueste **stabile** Firmware: **Einstellungen → Firmware → Automatisch aktualisieren**. Standardmäßig ist das aus.
+
+- **Was installiert wird:** nur die stabile Version, die das Gerät selbst als verfügbar meldet, nie Beta. Gen1 bekommt `/ota?update=true`, Gen2+ `Shelly.Update` mit `stage: "stable"`.
+- **Internetzugang nötig:** Das Gerät lädt die Firmware selbst vom Shelly-Server.
+- **Zeitfenster:** Updates laufen nur im eingestellten Zeitfenster (Standard 3–5 Uhr), weil das Gerät dabei neu startet und angeschlossene Verbraucher kurz schalten können.
+- **Ein Gerät nach dem anderen:** Erst wenn ein Gerät mit der neuen Version zurück ist, kommt das nächste.
+- **Fehlschlag:** Meldet sich das Gerät nach 10 Minuten noch mit der alten Version, wird der Versuch als fehlgeschlagen vermerkt und bei diesem Gerät erst nach 24 h wiederholt.
+- **Ausgelassen werden** Akkugeräte (sie schlafen), Geräte ohne gültiges Shelly-Passwort und Geräte, die auf ihrer Detailseite vom Auto-Update ausgenommen sind.
+- **Detailseite:** Dort steht das Ergebnis des letzten Updates. Mit **Jetzt aktualisieren** lässt sich ein einzelnes Gerät sofort aktualisieren, auch außerhalb des Zeitfensters (mit Bestätigung per zweitem Klick).
+
 ## Konfiguration (Umgebungsvariablen)
 
 Die meisten Werte lassen sich auch in der Oberfläche unter **Einstellungen** ändern (siehe oben). Die Umgebungsvariablen sind dann nur die Startwerte.
@@ -176,6 +188,8 @@ Die meisten Werte lassen sich auch in der Oberfläche unter **Einstellungen** ä
 | `FW_CHECK_ONLINE` | `true` | Gen1-Firmwareliste von Shelly laden |
 | `HTTP_TIMEOUT` | `4s` | Zeitlimit pro Geräteabfrage |
 | `SKIP_IFACES` | `docker,br-,veth,…` | Schnittstellen-Präfixe, die bei der Netzerkennung ignoriert werden |
+| `AUTO_UPDATE` | `false` | Firmware automatisch aktualisieren |
+| `AUTO_UPDATE_FROM` / `AUTO_UPDATE_TO` | `3` / `5` | Zeitfenster dafür (volle Stunden, Ende exklusiv) |
 | `WIFI_GOOD` / `WIFI_OK` | `-67` / `-79` | WLAN-Farbgrenzen in dBm (grün ab / gelb ab) |
 | `SETTINGS_RESET` | `false` | `true` verwirft beim Start die Einstellungen aus der Oberfläche |
 | `DATA_DIR` | `/data` | Speicherort von `devices.json` und `settings.json` |
@@ -191,6 +205,8 @@ Die meisten Werte lassen sich auch in der Oberfläche unter **Einstellungen** ä
 | POST | `/api/scan` | Scan sofort starten |
 | POST | `/api/probe` (`ip=…`) | einzelne IP abfragen und hinzufügen |
 | DELETE | `/api/devices/{mac}` | Gerät vergessen |
+| POST | `/api/devices/{mac}/update` | Firmware-Update sofort auslösen |
+| PUT | `/api/devices/{mac}/autoupdate` (`{"enabled":bool}`) | Gerät vom Auto-Update ausnehmen bzw. wieder aufnehmen |
 | GET / PUT | `/api/settings` | Einstellungen lesen / ändern |
 | GET | `/api/info` | Version, Laufzeit, Speicher |
 | GET | `/healthz` | Healthcheck |
