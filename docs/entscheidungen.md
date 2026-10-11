@@ -62,3 +62,17 @@ Laufendes Log nicht offensichtlicher Entscheidungen, neueste unten.
 **Generische Kanäle statt Modelltabellen:** Gen2+ liefert Komponenten als `typ:id`. Alle außer Systemkomponenten (sys, wifi, cloud …) werden angezeigt. Bekannte Felder bekommen deutsche Namen, Einheiten und Umrechnung (Wh → kWh), unbekannte werden roh angezeigt. Damit sind auch künftige Modelle ohne Codeänderung abgedeckt. Gen1 wird aus relays/meters/emeters/lights/rollers/inputs und den Sensorfeldern gebildet. Achtung: `meters[].total` ist bei Gen1 in **Wattminuten**, `emeters[].total` dagegen in Wh.
 
 **Shelly-Konto ist lokal nicht lesbar.** Weder Gen1 (`/settings`, `/status`) noch Gen2+ (`Shelly.GetConfig`, `Cloud.GetConfig`) liefern das verknüpfte Konto. Angezeigt werden Cloud aktiviert/verbunden und bei Gen2+ der Cloud-Server. Eine Zuordnung zum Konto wäre nur über die Shelly-Cloud-API mit dem Auth-Key je Konto möglich (legacy `device/all_status`, laut Shelly abgekündigt). Das ist offen und wird mit dem Nutzer entschieden.
+
+## 2026-10-11 – Einstellungsseite, Info-Seite, Version 1.0.0
+
+**Shelly-Konto bleibt bei der lokalen Anzeige** (Nutzer hat nur ein Konto). Keine Anbindung an die Cloud-API.
+
+**Was einstellbar ist:** Werte, die man im Betrieb wirklich anpasst: Netze, Scan-/Abfrage-Intervall, mDNS, CoIoT, Offline-Grenze für Akkugeräte, Shelly-Benutzer/-Passwort, Gen1-Firmwareliste, WLAN-Farbgrenzen, Benutzer/Passwort der Oberfläche, ausführliches Log. **Bewusst nicht** in der Oberfläche: Port (`LISTEN`), `DATA_DIR`, Timeouts, Schnittstellenfilter. Eine falsche Einstellung dort kann die Oberfläche selbst unerreichbar machen, ohne dass man sie über die Oberfläche wieder reparieren kann.
+
+**Umgebung = Startwert, Oberfläche hat Vorrang.** Die Konfiguration ist ein unveränderlicher Schnappschuss (`atomic.Pointer`). Speichern erzeugt einen neuen, und alle Teile lesen bei jeder Verwendung den aktuellen. Schleifen (Scan, Poll, mDNS, Firmwareliste, CoIoT) werden über einen Änderungskanal geweckt. So greift alles ohne Neustart, und es gibt keine Datenrennen (`go test -race`).
+
+**Passwörter:** werden nie an den Browser ausgeliefert, nur ihre Herkunft (nicht gesetzt / Umgebung / Oberfläche). Das Web-Passwort wird als PBKDF2-SHA256 gespeichert (100 000 Iterationen, Go-Standardbibliothek, keine neue Abhängigkeit). Das Shelly-Passwort muss im Klartext liegen, weil es für Basic- bzw. Digest-Auth gebraucht wird. Die Datei hat deshalb Rechte 0600.
+
+**Notausgang `SETTINGS_RESET=true`:** Wer sich mit einem in der Oberfläche gesetzten Web-Passwort aussperrt, kommt ohne SSH nicht an `/data/settings.json` (Docker-Volume). Die Variable lässt sich im Aufgabenplanungs-Script setzen und verwirft die Datei beim Start.
+
+**Kein `confirm()`-Dialog** beim Entfernen eines Passworts. Stattdessen bestätigt ein zweiter Klick. Das ist robuster und blockiert die Seite nicht.

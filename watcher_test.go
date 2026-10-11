@@ -6,9 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -17,11 +20,13 @@ import (
 	"golang.org/x/net/websocket"
 )
 
-func testConfig(pass string) *Config {
-	return &Config{
+func testConfig(pass string) *Runtime {
+	return newRuntime(&Config{
 		HTTPTimeout: 2 * time.Second, ShellyUser: "admin", ShellyPassword: pass,
-		OfflineAfter: time.Minute, SleepyOfflineAfter: time.Hour,
-	}
+		OfflineAfter: time.Minute, SleepyOfflineAfter: time.Hour, offlineFromEnv: true,
+		ScanInterval: 15 * time.Minute, PollInterval: time.Minute, WebUser: "admin",
+		WifiGood: -67, WifiOK: -79,
+	}, "")
 }
 
 func sha(s string) string { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:]) }
@@ -599,5 +604,114 @@ func TestValueOrder(t *testing.T) {
 	}
 	if want := "Leistung,Spannung,Strom,Energie gesamt,Temperatur"; strings.Join(got, ",") != want {
 		t.Fatalf("Reihenfolge %v, will %s", got, want)
+	}
+}
+
+func putSettings(t *testing.T, url, body string, auth ...string) (int, string) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPut, url+"/api/settings", strings.NewReader(body))
+	if len(auth) == 2 {
+		req.SetBasicAuth(auth[0], auth[1])
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(b)
+}
+
+func TestSettings(t *testing.T) {
+	dir := t.TempDir()
+	base := testConfig("env-pw").Get()
+	rt := newRuntime(base, dir)
+	st := newStore(rt)
+	pr := newProber(rt, st)
+	srv := httptest.NewServer((&Web{cfg: rt, st: st, pr: pr, sc: newScanner(rt, pr)}).handler())
+	defer srv.Close()
+
+	// Werte ändern: greifen sofort
+	changed := rt.Changed()
+	code, body := putSettings(t, srv.URL, `{"values":{"poll_seconds":30,"scan_cidrs":"192.168.5.0/24, 10.0.0.7","wifi_good":-60,"wifi_ok":-75,"coiot":false},"shelly_password":"neu"}`)
+	if code != 200 {
+		t.Fatalf("PUT: %d %s", code, body)
+	}
+	select {
+	case <-changed:
+	default:
+		t.Fatal("Änderung wurde nicht signalisiert")
+	}
+	c := rt.Get()
+	if c.PollInterval != 30*time.Second || len(c.ScanCIDRs) != 2 || c.WifiGood != -60 || c.CoIoT || c.ShellyPassword != "neu" ||
+		c.OfflineAfter != 3*30*time.Second+30*time.Second && !c.offlineFromEnv {
+		t.Fatalf("Konfiguration: %+v", c)
+	}
+	if strings.Contains(body, "neu") || strings.Contains(body, "env-pw") {
+		t.Fatalf("Passwort darf nie ausgeliefert werden: %s", body)
+	}
+	if !strings.Contains(body, `"shelly_password":"settings"`) {
+		t.Fatalf("Passwort-Herkunft fehlt: %s", body)
+	}
+
+	// Ungültiges wird abgelehnt und ändert nichts
+	for _, bad := range []string{
+		`{"values":{"poll_seconds":2}}`, `{"values":{"scan_cidrs":"10.0.0.0/8"}}`,
+		`{"values":{"wifi_good":-80,"wifi_ok":-70}}`, `{"values":{"gibtsnicht":1}}`, `{"values":{"web_user":""}}`,
+	} {
+		if code, _ := putSettings(t, srv.URL, bad); code != 400 {
+			t.Errorf("%s: Code %d, will 400", bad, code)
+		}
+	}
+	if rt.Get().PollInterval != 30*time.Second {
+		t.Fatal("ungültige Eingabe hat Werte verändert")
+	}
+
+	// Persistenz: neuer Runtime liest settings.json
+	rt2 := newRuntime(base, dir)
+	rt2.load(false)
+	if rt2.Get().PollInterval != 30*time.Second || rt2.Get().ShellyPassword != "neu" {
+		t.Fatalf("nicht gespeichert: %+v", rt2.Get())
+	}
+	// Zurücksetzen eines Feldes und des Passworts
+	putSettings(t, srv.URL, `{"values":{"poll_seconds":null},"shelly_password_reset":true}`)
+	if rt.Get().PollInterval != time.Minute || rt.Get().ShellyPassword != "env-pw" {
+		t.Fatalf("Reset: %+v", rt.Get())
+	}
+
+	// Web-Passwort setzen -> Anmeldung nötig, gehasht gespeichert
+	putSettings(t, srv.URL, `{"web_password":"geheim123"}`)
+	if r, _ := http.Get(srv.URL + "/api/devices"); r.StatusCode != 401 {
+		t.Fatalf("ohne Anmeldung: %d", r.StatusCode)
+	}
+	if r, _ := http.Get(srv.URL + "/healthz"); r.StatusCode != 200 {
+		t.Fatal("/healthz muss frei bleiben")
+	}
+	raw, _ := os.ReadFile(filepath.Join(dir, "settings.json"))
+	if strings.Contains(string(raw), "geheim123") || !strings.Contains(string(raw), "pbkdf2-sha256$") {
+		t.Fatalf("Web-Passwort nicht gehasht: %s", raw)
+	}
+	if code, _ := putSettings(t, srv.URL, `{"values":{"debug":true}}`, "admin", "falsch"); code != 401 {
+		t.Fatalf("falsches Passwort: %d", code)
+	}
+	if code, b := putSettings(t, srv.URL, `{"web_password":""}`, "admin", "geheim123"); code != 200 {
+		t.Fatalf("mit Passwort: %d %s", code, b)
+	}
+	if r, _ := http.Get(srv.URL + "/api/devices"); r.StatusCode != 200 {
+		t.Fatalf("Schutz sollte aus sein: %d", r.StatusCode)
+	}
+
+	// SETTINGS_RESET verwirft alles
+	rt3 := newRuntime(base, dir)
+	rt3.load(true)
+	if _, err := os.Stat(filepath.Join(dir, "settings.json")); !os.IsNotExist(err) || rt3.Get().ShellyPassword != "env-pw" {
+		t.Fatal("SETTINGS_RESET wirkt nicht")
+	}
+}
+
+func TestPasswordHash(t *testing.T) {
+	h := hashPassword("pw")
+	if !checkPasswordHash(h, "pw") || checkPasswordHash(h, "PW") || checkPasswordHash("kaputt", "pw") || hashPassword("pw") == h {
+		t.Fatal("Passwort-Hash fehlerhaft")
 	}
 }

@@ -121,6 +121,12 @@ Geräte am LAN-Kabel (Pro-Serie) zeigen „LAN“.
 
 **Detailseite** (Klick auf den Gerätenamen): Schaltzustand und Messwerte aller Kanäle mit den im Gerät vergebenen Kanalnamen, also Leistung, Spannung, Strom, Energie, Temperatur, Luftfeuchte, Rollladenposition, Eingänge und bei 3-Phasen-Zählern jede Phase einzeln. Dazu Laufzeit, Firmware, WLAN und Shelly-Cloud-Status. Die Seite fragt ein erreichbares Gerät beim Öffnen live ab und aktualisiert sich alle 10 Sekunden. Bei schlafenden Akkugeräten erscheint der zuletzt gemeldete Stand. Die Messwerte stammen aus dem Status, den der minütliche Poll ohnehin liest, sie kosten also keine zusätzlichen Abfragen.
 
+**Einstellungen:** Netze, Scan- und Abfrage-Intervall, mDNS/CoIoT, Shelly-Zugangsdaten, Gen1-Firmwareliste, WLAN-Farbgrenzen, Passwort der Oberfläche und ausführliches Log lassen sich direkt in der Oberfläche ändern. Änderungen gelten sofort, ohne Neustart. Die Umgebungsvariablen sind die Startwerte. In der Oberfläche geänderte Werte haben Vorrang, sind dort markiert und lassen sich einzeln zurücksetzen. Sie liegen in `/data/settings.json`. Das Web-Passwort wird nur als Hash gespeichert (PBKDF2-SHA256), das Shelly-Passwort im Klartext (Dateirechte 0600), weil es zum Anmelden an den Geräten gebraucht wird. Passwörter werden nie an den Browser zurückgegeben.
+
+> **Web-Passwort vergessen?** Den Container einmal mit `SETTINGS_RESET=true` starten (im Aufgabenplanungs-Script eine Zeile `-e SETTINGS_RESET=true \` ergänzen und ausführen). Dann werden die Einstellungen aus der Oberfläche verworfen und es gelten wieder die Startwerte. Die Zeile danach wieder entfernen.
+
+**Info:** Version, Link zum Projekt, Laufzeit und Speicherverbrauch.
+
 **Shelly-Konto:** Mit welchem Konto ein Gerät verknüpft ist, gibt es über seine lokale Schnittstelle nicht preis. Angezeigt werden, ob die Cloud aktiviert und verbunden ist, und bei Gen2+ der Cloud-Server.
 
 ## Wie Geräte gefunden werden
@@ -151,6 +157,8 @@ Beta-Versionen zählen nie als Referenz. In der Oberfläche gibt es dafür die K
 
 ## Konfiguration (Umgebungsvariablen)
 
+Die meisten Werte lassen sich auch in der Oberfläche unter **Einstellungen** ändern (siehe oben). Die Umgebungsvariablen sind dann nur die Startwerte.
+
 | Variable | Standard | Bedeutung |
 |---|---|---|
 | `LISTEN` | `:8080` | Adresse/Port der Weboberfläche |
@@ -168,7 +176,9 @@ Beta-Versionen zählen nie als Referenz. In der Oberfläche gibt es dafür die K
 | `FW_CHECK_ONLINE` | `true` | Gen1-Firmwareliste von Shelly laden |
 | `HTTP_TIMEOUT` | `4s` | Zeitlimit pro Geräteabfrage |
 | `SKIP_IFACES` | `docker,br-,veth,…` | Schnittstellen-Präfixe, die bei der Netzerkennung ignoriert werden |
-| `DATA_DIR` | `/data` | Speicherort von `devices.json` |
+| `WIFI_GOOD` / `WIFI_OK` | `-67` / `-79` | WLAN-Farbgrenzen in dBm (grün ab / gelb ab) |
+| `SETTINGS_RESET` | `false` | `true` verwirft beim Start die Einstellungen aus der Oberfläche |
+| `DATA_DIR` | `/data` | Speicherort von `devices.json` und `settings.json` |
 | `DEBUG` | `false` | ausführliches Log |
 
 ## API
@@ -181,6 +191,8 @@ Beta-Versionen zählen nie als Referenz. In der Oberfläche gibt es dafür die K
 | POST | `/api/scan` | Scan sofort starten |
 | POST | `/api/probe` (`ip=…`) | einzelne IP abfragen und hinzufügen |
 | DELETE | `/api/devices/{mac}` | Gerät vergessen |
+| GET / PUT | `/api/settings` | Einstellungen lesen / ändern |
+| GET | `/api/info` | Version, Laufzeit, Speicher |
 | GET | `/healthz` | Healthcheck |
 | GET | `/ws` | Outbound-WebSocket-Endpunkt für Gen2+-Geräte |
 

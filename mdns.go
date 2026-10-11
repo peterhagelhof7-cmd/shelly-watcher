@@ -21,17 +21,23 @@ var mdnsGroup = &net.UDPAddr{IP: net.IPv4(224, 0, 0, 251), Port: 5353}
 
 var mdnsServices = []string{"_shelly._tcp.local.", "_http._tcp.local."}
 
-func runMDNS(ctx context.Context, cfg *Config, pr *Prober) {
-	t := time.NewTicker(cfg.MDNSInterval)
-	defer t.Stop()
+func runMDNS(ctx context.Context, rt *Runtime, pr *Prober) {
 	for {
-		if err := mdnsQuery(ctx, cfg, pr); err != nil {
-			log.Printf("mDNS: %v", err)
+		c := rt.Get()
+		changed := rt.Changed()
+		if c.MDNS {
+			if err := mdnsQuery(ctx, c, pr); err != nil {
+				log.Printf("mDNS: %v", err)
+			}
 		}
+		t := time.NewTimer(c.MDNSInterval)
 		select {
 		case <-ctx.Done():
+			t.Stop()
 			return
 		case <-t.C:
+		case <-changed:
+			t.Stop()
 		}
 	}
 }

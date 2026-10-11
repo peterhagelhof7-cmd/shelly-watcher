@@ -64,11 +64,33 @@ footer{color:var(--muted);font-size:12px;padding:16px;text-align:center}
 .onoff.on{background:var(--ok);color:#0d1428}.onoff.off{background:var(--nav);color:var(--muted)}
 .hint{color:var(--muted);font-size:12px;margin-top:8px}
 .back{margin-bottom:12px}
+/* Navigation */
+nav.top{display:flex;gap:6px;flex-wrap:wrap}
+nav.top a{padding:7px 14px;border-radius:8px;background:var(--nav);color:var(--link);font-size:14px}
+nav.top a.on{background:var(--acc);color:#fff}
+nav.top a:hover{text-decoration:none;filter:brightness(1.15)}
+/* Formular */
+.form{max-width:760px}
+.form .card{margin-bottom:12px}
+.row2{display:grid;grid-template-columns:220px 1fr;gap:6px 16px;align-items:start;margin:10px 0}
+.row2 > label{padding-top:8px;color:var(--fg)}
+.row2 .help{color:var(--muted);font-size:12px;margin-top:4px}
+.row2 input[type=number]{width:110px}
+.row2 input[type=text],.row2 input[type=password],.row2 textarea{width:100%}
+textarea{font:inherit;font-size:14px;color:var(--fg);background:var(--field);border:1px solid var(--line);border-radius:8px;padding:8px 12px;min-height:60px;resize:vertical}
+.chk{display:flex;gap:8px;align-items:center;padding-top:8px}
+.chk input{width:18px;height:18px}
+.ovr{font-size:11px;color:var(--warn);margin-left:6px}
+.rst{background:none;color:var(--link);padding:0 4px;font-size:12px}
+.savebar{position:sticky;bottom:0;background:var(--bg);padding:12px 0;display:flex;gap:10px;align-items:center}
+.ok{color:var(--ok)}.err{color:#f0a0a0}
+@media (max-width:640px){.row2{grid-template-columns:1fr}.row2 > label{padding-top:0}}
 </style>
 </head>
 <body>
 <header>
   <h1>Shelly Watcher <small id="ver"></small></h1>
+  <nav class="top"><a href="#/" data-r="list">Übersicht</a><a href="#/einstellungen" data-r="settings">Einstellungen</a><a href="#/info" data-r="info">Info</a></nav>
   <div class="bar" style="margin:0">
     <span id="msg"></span>
     <button id="scan" class="primary">Jetzt scannen</button>
@@ -76,6 +98,8 @@ footer{color:var(--muted);font-size:12px;padding:16px;text-align:center}
   </div>
 </header>
 <main id="detail" hidden></main>
+<main id="settings" hidden></main>
+<main id="info" hidden></main>
 <main id="list">
   <div class="tiles" id="tiles"></div>
 
@@ -144,10 +168,11 @@ function fwState(d) {
 }
 
 // WLAN-Qualität: gut ab -67 dBm, ausreichend bis -79 dBm, darunter schlecht
+let thr = {good: -67, ok: -79}; // wird aus den Einstellungen übernommen
 function wifiQ(r) {
   if (r == null) return null;
-  if (r >= -67) return {cls: "w-good", txt: "gut", bars: r >= -55 ? 4 : 3};
-  if (r >= -79) return {cls: "w-ok", txt: "ausreichend", bars: 2};
+  if (r >= thr.good) return {cls: "w-good", txt: "gut", bars: r >= thr.good + 12 ? 4 : 3};
+  if (r >= thr.ok) return {cls: "w-ok", txt: "ausreichend", bars: 2};
   return {cls: "w-bad", txt: "schlecht", bars: 1};
 }
 function wifiCell(d) {
@@ -155,7 +180,7 @@ function wifiCell(d) {
   const q = wifiQ(d.rssi);
   if (!q) return "";
   const bars = [1, 2, 3, 4].map(i => `<i class="${i <= q.bars ? "on" : ""}"></i>`).join("");
-  return `<span class="${q.cls}" title="WLAN ${q.txt} (gut ≥ −67 dBm, ausreichend ≥ −79 dBm, darunter schlecht)"><span class="bars">${bars}</span>${d.rssi} dBm</span>`;
+  return `<span class="${q.cls}" title="WLAN ${q.txt} (gut ≥ ${thr.good} dBm, ausreichend ≥ ${thr.ok} dBm, darunter schlecht)"><span class="bars">${bars}</span>${d.rssi} dBm</span>`;
 }
 
 const filters = {
@@ -252,6 +277,7 @@ async function loadDetail() {
 
 function renderDetail(d) {
   data.now = d.now;
+  thr = {good: d.wifi_good, ok: d.wifi_ok};
   const det = d.detail || {components: []};
   const q = wifiQ(d.rssi);
   const kv = rows => `<dl class="kv">${rows.filter(r => r[1] !== "" && r[1] != null).map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>`;
@@ -307,27 +333,177 @@ function renderDetail(d) {
     </div>`;
 }
 
+// ---------- Einstellungen ----------
+let settings = null;
+const fields = [
+  {sec: "Gerätesuche"},
+  {k: "scan_cidrs", label: "Netze", type: "textarea", help: s => "Leer = automatisch" + (s.auto_networks?.length ? " (erkannt: " + s.auto_networks.join(", ") + ")" : "") + ". Mehrere Netze oder einzelne IPs mit Komma trennen, z.B. 192.168.1.0/24, 10.0.20.0/24 (höchstens /16)."},
+  {k: "scan_minutes", label: "Netz-Scan alle", type: "number", unit: "Minuten", min: 1, help: () => "Komplette Suche nach neuen Geräten."},
+  {k: "poll_seconds", label: "Geräte abfragen alle", type: "number", unit: "Sekunden", min: 10, help: () => "Aktualisiert Status, Messwerte und Firmware bekannter Geräte."},
+  {k: "mdns", label: "mDNS-Suche", type: "bool", help: () => "Findet Geräte über ihre Netzwerk-Ankündigung."},
+  {k: "coiot", label: "CoIoT-Empfang", type: "bool", help: () => "Empfängt Gen1-Statusmeldungen (Port 5683/udp), nötig für schlafende Gen1-Akkugeräte."},
+  {k: "sleepy_hours", label: "Akkugeräte offline nach", type: "number", unit: "Stunden", min: 1, help: () => "So lange gilt ein schlafendes Akkugerät noch als „schläft“ statt „offline“."},
+  {sec: "Zugang zu den Shellys"},
+  {k: "shelly_user", label: "Benutzer (Gen1)", type: "text", help: () => "Gen2+ nutzt immer „admin“."},
+  {k: "shelly_password", label: "Passwort", type: "secret", src: "shelly_password", help: () => "Ein gemeinsames Passwort für alle Shellys."},
+  {sec: "Firmware"},
+  {k: "fw_check_online", label: "Gen1-Firmwareliste laden", type: "bool", help: () => "Lädt täglich die aktuellen Gen1-Versionen von api.shelly.cloud, damit veraltete Firmware auch bei Shellys ohne Internet erkannt wird."},
+  {sec: "Anzeige"},
+  {k: "wifi_good", label: "WLAN gut ab", type: "number", unit: "dBm", min: -100, max: -20, help: () => "Grün in der Übersicht."},
+  {k: "wifi_ok", label: "WLAN ausreichend ab", type: "number", unit: "dBm", min: -100, max: -20, help: () => "Gelb; schwächer ist rot (schlecht)."},
+  {sec: "Weboberfläche"},
+  {k: "web_user", label: "Benutzer", type: "text", help: () => ""},
+  {k: "web_password", label: "Passwort", type: "secret", src: "web_password", help: () => "Schützt diese Oberfläche. Vergessen? Einmal mit SETTINGS_RESET=true starten (z.B. als -e-Zeile im Aufgabenplanungs-Script), dann gelten wieder die Startwerte."},
+  {sec: "Diagnose"},
+  {k: "debug", label: "Ausführliches Log", type: "bool", help: () => "Schreibt jede Geräteabfrage ins Container-Log."},
+];
+const pwText = {none: "nicht gesetzt", env: "gesetzt (Startwert aus der Umgebung)", settings: "gesetzt (hier geändert)"};
+
+async function loadSettings() {
+  const r = await fetch("api/settings", {cache: "no-store"});
+  if (!r.ok) { $("#settings").innerHTML = '<p class="err">Einstellungen nicht lesbar.</p>'; return; }
+  settings = await r.json();
+  renderSettings();
+}
+
+function startText(f) {
+  const v = settings.start[f.k];
+  if (f.type === "bool") return v ? "an" : "aus";
+  if (f.k === "scan_cidrs") return v || "automatisch";
+  return v === "" ? "leer" : v + (f.unit ? " " + f.unit : "");
+}
+
+function renderSettings(msg) {
+  const s = settings;
+  const rows = fields.map(f => {
+    if (f.sec) return `${f === fields[0] ? "" : "</div>"}<div class="card"><h3>${f.sec}</h3>`;
+    const ov = s.overridden?.includes(f.k);
+    const mark = ov ? `<span class="ovr" title="Startwert: ${esc(startText(f))}">geändert</span><button type="button" class="rst" data-reset="${f.k}" title="Auf Startwert (${esc(startText(f))}) zurücksetzen">↺</button>` : "";
+    let input;
+    const v = s.values[f.k];
+    if (f.type === "bool") input = `<div class="chk"><input type="checkbox" id="f_${f.k}" ${v ? "checked" : ""}><label for="f_${f.k}">aktiv</label>${mark}</div>`;
+    else if (f.type === "textarea") input = `<textarea id="f_${f.k}" placeholder="automatisch">${esc(v)}</textarea>${mark}`;
+    else if (f.type === "secret") {
+      const src = s[f.src];
+      input = `<input type="password" id="f_${f.k}" autocomplete="new-password" placeholder="${src === "none" ? "kein Passwort" : "unverändert lassen"}">
+        <div class="help">Status: ${pwText[src]}${src === "settings" ? ` <button type="button" class="rst" data-pwreset="${f.k}">↺ auf Startwert zurücksetzen</button>` : ""}
+        ${src !== "none" ? ` <button type="button" class="rst" data-pwclear="${f.k}">Passwort entfernen</button>` : ""}</div>`;
+    } else input = `<input type="${f.type}" id="f_${f.k}" value="${esc(v)}" ${f.min != null ? `min="${f.min}"` : ""} ${f.max != null ? `max="${f.max}"` : ""}> ${f.unit ? `<span class="mute">${f.unit}</span>` : ""}${mark}`;
+    const help = f.help(s);
+    return `<div class="row2"><label for="f_${f.k}">${f.label}</label><div>${input}${help ? `<div class="help">${esc(help)}</div>` : ""}</div></div>`;
+  }).join("") + "</div>";
+
+  $("#settings").innerHTML = `<div class="form">
+    <h2 style="margin-top:0">Einstellungen</h2>
+    <p class="hint" style="margin-top:0">Änderungen gelten sofort, ohne Neustart. Startwerte kommen aus den Umgebungsvariablen (z.B. dem Aufgabenplanungs-Script). Hier geänderte Werte haben Vorrang und sind mit „geändert“ markiert.${s.persistent ? "" : ' <span class="err">Achtung: DATA_DIR ist nicht beschreibbar, Änderungen gehen beim Neustart verloren.</span>'}</p>
+    <form id="sform">${rows}
+      <div class="savebar"><button class="primary">Speichern</button><span id="smsg">${msg || ""}</span></div>
+    </form></div>`;
+
+  $("#sform").addEventListener("submit", e => { e.preventDefault(); saveSettings(collect()); });
+  $("#settings").querySelectorAll("[data-reset]").forEach(b => b.addEventListener("click", () => saveSettings({values: {[b.dataset.reset]: null}})));
+  $("#settings").querySelectorAll("[data-pwreset]").forEach(b => b.addEventListener("click", () => saveSettings({[b.dataset.pwreset + "_reset"]: true})));
+  $("#settings").querySelectorAll("[data-pwclear]").forEach(b => b.addEventListener("click", () => {
+    if (confirmText(b.dataset.pwclear)) saveSettings({[b.dataset.pwclear]: ""});
+  }));
+}
+
+function confirmText(k) {
+  // bewusst ohne confirm()-Dialog: zweiter Klick bestätigt
+  const b = $(`[data-pwclear="${k}"]`);
+  if (b.dataset.armed) return true;
+  b.dataset.armed = "1";
+  b.textContent = "wirklich entfernen? nochmal klicken";
+  return false;
+}
+
+function collect() {
+  const values = {};
+  for (const f of fields) {
+    if (!f.k || f.type === "secret") continue;
+    const el = $("#f_" + f.k);
+    let v = f.type === "bool" ? el.checked : f.type === "number" ? Number(el.value) : el.value.trim();
+    if (JSON.stringify(v) !== JSON.stringify(settings.values[f.k])) values[f.k] = v;
+  }
+  const req = {values};
+  for (const k of ["shelly_password", "web_password"]) {
+    const v = $("#f_" + k).value;
+    if (v !== "") req[k] = v;
+  }
+  return req;
+}
+
+async function saveSettings(req) {
+  $("#smsg").className = "";
+  $("#smsg").textContent = "Speichere …";
+  const r = await fetch("api/settings", {method: "PUT", headers: {"Content-Type": "application/json"}, body: JSON.stringify(req)});
+  if (r.ok) {
+    settings = await r.json();
+    renderSettings('<span class="ok">Gespeichert – gilt ab sofort.</span>');
+  } else {
+    $("#smsg").innerHTML = '<span class="err">' + esc(await r.text()) + "</span>";
+  }
+}
+
+// ---------- Info ----------
+async function loadInfo() {
+  const r = await fetch("api/info", {cache: "no-store"});
+  if (!r.ok) return;
+  const i = await r.json();
+  const mb = b => b ? (b / 1048576).toLocaleString("de-DE", {maximumFractionDigits: 1}) + " MB" : "–";
+  $("#info").innerHTML = `<div class="form">
+    <h2 style="margin-top:0">Über Shelly Watcher</h2>
+    <div class="card">
+      <p style="margin-top:0">Shelly Watcher findet alle Shelly-Geräte im Netzwerk (Gen1 bis Gen4, Pro, Wall Display, auch Akkugeräte) und zeigt Modell, Firmware-Stand, veraltete Firmware, WLAN-Qualität, Schaltzustände und Messwerte zentral an. Alles läuft lokal, ohne Cloud, in einem kleinen Docker-Container.</p>
+      <dl class="kv">
+        <dt>Version</dt><dd class="mono">${esc(i.version)}</dd>
+        <dt>Projekt</dt><dd><a href="${esc(i.repo)}" target="_blank" rel="noopener">${esc(i.repo.replace("https://", ""))}</a></dd>
+        <dt>Fehler melden</dt><dd><a href="${esc(i.repo)}/issues" target="_blank" rel="noopener">GitHub Issues</a></dd>
+        <dt>Lizenz</dt><dd>MIT</dd>
+      </dl>
+    </div>
+    <div class="card"><h3>Laufzeit</h3>
+      <dl class="kv">
+        <dt>Läuft seit</dt><dd>${dur(i.uptime_s) || "gerade gestartet"} (${new Date(i.started).toLocaleString("de-DE")})</dd>
+        <dt>Arbeitsspeicher</dt><dd>${mb(i.rss_bytes)}${i.rss_bytes ? "" : " (nur unter Linux messbar)"}</dd>
+        <dt>Geräte</dt><dd>${i.devices}</dd>
+        <dt>Bekannte Modelle</dt><dd>${i.models}</dd>
+        <dt>Plattform</dt><dd class="mono">${esc(i.platform)} · ${esc(i.go)}</dd>
+      </dl>
+    </div>
+    <div class="card"><h3>Danksagung</h3>
+      <p style="margin:0">Die Tabelle der Modellnamen stammt aus <a href="https://github.com/home-assistant-libs/aioshelly" target="_blank" rel="noopener">aioshelly</a> (Home Assistant, Apache-2.0). „Shelly“ ist eine Marke der Shelly Group; dieses Projekt steht in keiner Verbindung zu ihr.</p>
+    </div></div>`;
+}
+
 function route() {
-  const m = location.hash.match(/^#\/geraet\/([0-9A-Fa-f]{12})$/);
+  const h = location.hash;
+  const m = h.match(/^#\/geraet\/([0-9A-Fa-f]{12})$/);
+  const page = m ? "detail" : h === "#/einstellungen" ? "settings" : h === "#/info" ? "info" : "list";
   clearInterval(detailTimer);
   detailMac = m ? m[1].toUpperCase() : null;
-  $("#list").hidden = !!detailMac;
-  $("#detail").hidden = !detailMac;
-  if (detailMac) {
+  for (const id of ["list", "detail", "settings", "info"]) $("#" + id).hidden = id !== page;
+  document.querySelectorAll("nav.top a").forEach(a => a.classList.toggle("on", a.dataset.r === (page === "detail" ? "list" : page)));
+  $("#scan").style.display = page === "list" ? "" : "none";
+  if (page === "detail") {
     $("#detail").innerHTML = '<p class="mute">Lade …</p>';
     loadDetail();
     detailTimer = setInterval(loadDetail, 10000);
-    window.scrollTo(0, 0);
+  } else if (page === "settings") {
+    loadSettings();
+  } else if (page === "info") {
+    loadInfo();
   } else {
     load();
   }
+  window.scrollTo(0, 0);
 }
 window.addEventListener("hashchange", route);
 
 async function load() {
   try {
     const r = await fetch("api/devices", {cache: "no-store"});
-    if (r.ok) { data = await r.json(); render(); }
+    if (r.ok) { data = await r.json(); thr = {good: data.wifi_good, ok: data.wifi_ok}; render(); }
   } catch (e) { $("#msg").textContent = "Server nicht erreichbar"; }
 }
 
@@ -365,7 +541,7 @@ $("#add").addEventListener("submit", async e => {
 });
 
 route();
-setInterval(() => { if (!detailMac) load(); }, 15000);
+setInterval(() => { if ($("#detail").hidden && $("#settings").hidden && $("#info").hidden) load(); }, 15000);
 </script>
 </body>
 </html>

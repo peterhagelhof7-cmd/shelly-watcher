@@ -20,6 +20,35 @@ var coiotGroup = net.IPv4(224, 0, 1, 187)
 
 const coiotOptGlobalDevID = 3332
 
+// runCoIoTManager startet bzw. stoppt den CoIoT-Empfang je nach Einstellung.
+func runCoIoTManager(ctx context.Context, rt *Runtime, pr *Prober, st *Store) {
+	var stop context.CancelFunc
+	var done chan struct{}
+	for {
+		changed := rt.Changed() // vor dem Lesen holen, damit keine Änderung verloren geht
+		on := rt.Get().CoIoT
+		if on && stop == nil {
+			var cctx context.Context
+			cctx, stop = context.WithCancel(ctx)
+			done = make(chan struct{})
+			go func(d chan struct{}) { runCoIoT(cctx, rt.Get(), pr, st); close(d) }(done)
+		} else if !on && stop != nil {
+			stop()
+			<-done
+			stop = nil
+			log.Printf("CoIoT: abgeschaltet")
+		}
+		select {
+		case <-ctx.Done():
+			if stop != nil {
+				stop()
+			}
+			return
+		case <-changed:
+		}
+	}
+}
+
 func runCoIoT(ctx context.Context, cfg *Config, pr *Prober, st *Store) {
 	conn, err := net.ListenUDP("udp4", &net.UDPAddr{Port: 5683})
 	if err != nil {

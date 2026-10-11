@@ -48,20 +48,43 @@ func (r *FWRef) info() (time.Time, string) {
 	return r.fetched, r.err
 }
 
-func runFWRef(ctx context.Context, r *FWRef) {
+// runFWRef lädt die Gen1-Liste täglich (bei Fehler stündlich), solange
+// FW_CHECK_ONLINE an ist. Abschalten verwirft die Liste sofort, Einschalten
+// lädt sofort; andere Einstellungsänderungen lassen den Zeitplan unberührt.
+func runFWRef(ctx context.Context, r *FWRef, rt *Runtime) {
+	var next time.Time // nächster Ladezeitpunkt; null = sofort
 	for {
-		wait := 24 * time.Hour
-		if err := r.fetch(ctx); err != nil {
-			log.Printf("Firmware-Liste (Gen1) nicht abrufbar, erneuter Versuch in 1 h: %v", err)
+		changed := rt.Changed()
+		if !rt.Get().FWCheckOnline {
 			r.mu.Lock()
-			r.err = err.Error()
+			r.gen1, r.fetched, r.err = nil, time.Time{}, ""
 			r.mu.Unlock()
-			wait = time.Hour
+			next = time.Time{}
+			select {
+			case <-ctx.Done():
+				return
+			case <-changed:
+				continue
+			}
 		}
+		if !time.Now().Before(next) {
+			next = time.Now().Add(24 * time.Hour)
+			if err := r.fetch(ctx); err != nil {
+				log.Printf("Firmware-Liste (Gen1) nicht abrufbar, erneuter Versuch in 1 h: %v", err)
+				r.mu.Lock()
+				r.err = err.Error()
+				r.mu.Unlock()
+				next = time.Now().Add(time.Hour)
+			}
+		}
+		t := time.NewTimer(time.Until(next))
 		select {
 		case <-ctx.Done():
+			t.Stop()
 			return
-		case <-time.After(wait):
+		case <-t.C:
+		case <-changed:
+			t.Stop()
 		}
 	}
 }

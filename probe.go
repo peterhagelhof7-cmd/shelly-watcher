@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -39,7 +38,7 @@ type probeReq struct {
 // Web) reichen IPs über enqueue ein; eine kleine Worker-Zahl hält RAM und
 // Last auf den Geräten gering.
 type Prober struct {
-	cfg    *Config
+	cfg    *Runtime
 	st     *Store
 	client *http.Client
 	queue  chan probeReq
@@ -59,17 +58,18 @@ const (
 	maxBodyBytes = 1 << 20
 )
 
-func newProber(cfg *Config, st *Store) *Prober {
+func newProber(cfg *Runtime, st *Store) *Prober {
+	timeout := cfg.Get().HTTPTimeout
 	tr := &http.Transport{
 		Proxy:                 nil, // LAN-Geräte nie über einen Proxy
 		DialContext:           (&net.Dialer{Timeout: 2 * time.Second}).DialContext,
 		DisableKeepAlives:     true, // Shellys haben wenige Sockets, nicht blockieren
-		ResponseHeaderTimeout: cfg.HTTPTimeout,
+		ResponseHeaderTimeout: timeout,
 	}
 	return &Prober{
 		cfg:    cfg,
 		st:     st,
-		client: &http.Client{Transport: tr, Timeout: cfg.HTTPTimeout},
+		client: &http.Client{Transport: tr, Timeout: timeout},
 		queue:  make(chan probeReq, 256),
 		last:   map[string]time.Time{},
 	}
@@ -200,7 +200,7 @@ func (p *Prober) probeFull(ctx context.Context, ip string, withConfig bool) (*De
 	d := &Device{IP: ip, MAC: normMAC(si.MAC)}
 	if si.Gen >= 2 {
 		d.applyGen2Info(&si)
-		if si.AuthEn && p.cfg.ShellyPassword == "" {
+		if si.AuthEn && p.cfg.Get().ShellyPassword == "" {
 			d.AuthStatus = "missing"
 			return d, nil
 		}
@@ -226,7 +226,7 @@ func (p *Prober) probeFull(ctx context.Context, ip string, withConfig bool) (*De
 	d.FW = si.FW
 	d.FWVersion = gen1Version(si.FW)
 	d.AuthEnable = si.Auth
-	if si.Auth && p.cfg.ShellyPassword == "" {
+	if si.Auth && p.cfg.Get().ShellyPassword == "" {
 		d.AuthStatus = "missing"
 		return d, nil
 	}
@@ -277,13 +277,13 @@ func (p *Prober) get(ctx context.Context, ip, path string, mode authMode, v any)
 	if err != nil {
 		return err
 	}
-	if resp.StatusCode == http.StatusUnauthorized && mode == authDigest && p.cfg.ShellyPassword != "" {
+	if pw := p.cfg.Get().ShellyPassword; resp.StatusCode == http.StatusUnauthorized && mode == authDigest && pw != "" {
 		ch, ok := findDigest(resp.Header)
 		resp.Body.Close()
 		if !ok {
 			return errAuth
 		}
-		authz := ch.authorization("admin", p.cfg.ShellyPassword, http.MethodGet, path, newCnonce(), 1)
+		authz := ch.authorization("admin", pw, http.MethodGet, path, newCnonce(), 1)
 		if resp, err = p.do(ctx, url, authNone, authz); err != nil {
 			return err
 		}
@@ -304,8 +304,8 @@ func (p *Prober) do(ctx context.Context, url string, mode authMode, authz string
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "shelly-watcher/"+version)
-	if mode == authBasic && p.cfg.ShellyPassword != "" {
-		req.SetBasicAuth(p.cfg.ShellyUser, p.cfg.ShellyPassword)
+	if c := p.cfg.Get(); mode == authBasic && c.ShellyPassword != "" {
+		req.SetBasicAuth(c.ShellyUser, c.ShellyPassword)
 	}
 	if authz != "" {
 		req.Header.Set("Authorization", authz)
@@ -468,11 +468,5 @@ func (d *Device) applyGen2Status(st *gen2Status) {
 	if st.DevPower != nil && st.DevPower.Battery.Percent != nil {
 		d.Battery = st.DevPower.Battery.Percent
 		d.Sleepy = true
-	}
-}
-
-func debugf(format string, args ...any) {
-	if debug {
-		log.Printf("DEBUG "+format, args...)
 	}
 }

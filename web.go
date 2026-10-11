@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/subtle"
 	"embed"
 	"encoding/csv"
 	"encoding/json"
@@ -17,7 +16,7 @@ import (
 var webFS embed.FS
 
 type Web struct {
-	cfg *Config
+	cfg *Runtime
 	st  *Store
 	pr  *Prober
 	sc  *Scanner
@@ -32,6 +31,9 @@ func (w *Web) handler() http.Handler {
 	mux.HandleFunc("POST /api/scan", w.scan)
 	mux.HandleFunc("POST /api/probe", w.probe)
 	mux.HandleFunc("GET /api/devices/{mac}", w.device)
+	mux.HandleFunc("GET /api/settings", w.settingsGet)
+	mux.HandleFunc("PUT /api/settings", w.settingsPut)
+	mux.HandleFunc("GET /api/info", w.info)
 	mux.HandleFunc("DELETE /api/devices/{mac}", w.forget)
 	mux.HandleFunc("GET /healthz", func(rw http.ResponseWriter, _ *http.Request) { rw.Write([]byte("ok\n")) })
 	mux.Handle("GET /ws", w.wsServer())
@@ -41,17 +43,14 @@ func (w *Web) handler() http.Handler {
 // auth: optionaler Passwortschutz der Oberfläche. /ws (Geräte) und /healthz
 // (Docker-Healthcheck) bleiben frei.
 func (w *Web) auth(next http.Handler) http.Handler {
-	if w.cfg.WebPassword == "" {
-		return next
-	}
 	return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/ws" || r.URL.Path == "/healthz" {
+		c := w.cfg.Get() // Passwort kann sich zur Laufzeit ändern
+		if !c.webAuthEnabled() || r.URL.Path == "/ws" || r.URL.Path == "/healthz" {
 			next.ServeHTTP(rw, r)
 			return
 		}
 		u, p, ok := r.BasicAuth()
-		if !ok || subtle.ConstantTimeCompare([]byte(u), []byte(w.cfg.WebUser)) != 1 ||
-			subtle.ConstantTimeCompare([]byte(p), []byte(w.cfg.WebPassword)) != 1 {
+		if !ok || !c.checkWebLogin(u, p) {
 			rw.Header().Set("WWW-Authenticate", `Basic realm="shelly-watcher"`)
 			http.Error(rw, "Anmeldung erforderlich", http.StatusUnauthorized)
 			return
@@ -72,8 +71,11 @@ func (w *Web) devices(rw http.ResponseWriter, _ *http.Request) {
 		HasPasswd bool      `json:"shelly_password_set"`
 		FWListAt  time.Time `json:"fw_list_fetched"`
 		FWListErr string    `json:"fw_list_error,omitempty"`
+		WifiGood  int       `json:"wifi_good"`
+		WifiOK    int       `json:"wifi_ok"`
 	}{Version: version, Now: time.Now(), Devices: w.st.list(), Scanning: running, LastScan: last,
-		Networks: nets, HasPasswd: w.cfg.ShellyPassword != ""}
+		Networks: nets, HasPasswd: w.cfg.Get().ShellyPassword != "",
+		WifiGood: w.cfg.Get().WifiGood, WifiOK: w.cfg.Get().WifiOK}
 	resp.FWListAt, resp.FWListErr = w.ref.info()
 	rw.Header().Set("Content-Type", "application/json")
 	rw.Header().Set("Cache-Control", "no-store")
@@ -151,7 +153,7 @@ func (w *Web) device(rw http.ResponseWriter, r *http.Request) {
 	}
 	liveErr := ""
 	if d.IP != "" && d.Status == "online" {
-		ctx, cancel := context.WithTimeout(r.Context(), 2*w.cfg.HTTPTimeout)
+		ctx, cancel := context.WithTimeout(r.Context(), 2*w.cfg.Get().HTTPTimeout)
 		obs, err := w.pr.probeFull(ctx, d.IP, true)
 		cancel()
 		switch {
@@ -164,14 +166,14 @@ func (w *Web) device(rw http.ResponseWriter, r *http.Request) {
 			d, _ = w.st.get(mac)
 		}
 	}
-	resp := struct {
+	c := w.cfg.Get()
+	writeJSON(rw, struct {
 		Device
 		LiveError string    `json:"live_error,omitempty"`
 		Now       time.Time `json:"now"`
-	}{d, liveErr, time.Now()}
-	rw.Header().Set("Content-Type", "application/json")
-	rw.Header().Set("Cache-Control", "no-store")
-	_ = json.NewEncoder(rw).Encode(resp)
+		WifiGood  int       `json:"wifi_good"`
+		WifiOK    int       `json:"wifi_ok"`
+	}{d, liveErr, time.Now(), c.WifiGood, c.WifiOK})
 }
 
 func (w *Web) forget(rw http.ResponseWriter, r *http.Request) {

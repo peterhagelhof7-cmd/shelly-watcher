@@ -14,8 +14,8 @@ import (
 )
 
 var (
-	version = "dev" // per -ldflags gesetzt
-	debug   bool
+	version   = "dev" // per -ldflags gesetzt
+	startedAt = time.Now()
 )
 
 func webSub() fs.FS {
@@ -33,7 +33,6 @@ func main() {
 	}
 	log.SetFlags(log.Ldate | log.Ltime)
 	cfg := loadConfig()
-	debug = cfg.Debug
 	log.Printf("shelly-watcher %s startet, Web auf %s", version, cfg.Listen)
 
 	if cfg.DataDir != "" {
@@ -42,24 +41,26 @@ func main() {
 			cfg.DataDir = ""
 		}
 	}
-	st := newStore(cfg)
+	rt := newRuntime(cfg, cfg.DataDir)
+	rt.load(envBool("SETTINGS_RESET", false))
+	st := newStore(rt)
 	st.load()
 	ref := &FWRef{}
 	st.ref = ref
-	pr := newProber(cfg, st)
-	sc := newScanner(cfg, pr)
+	pr := newProber(rt, st)
+	sc := newScanner(rt, pr)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if len(cfg.ScanCIDRs) == 0 {
-		for _, li := range lanInterfaces(cfg) {
+	if c := rt.Get(); len(c.ScanCIDRs) == 0 {
+		for _, li := range lanInterfaces(c) {
 			log.Printf("Netz erkannt: %s %s", li.ifi.Name, li.prefix)
 		}
 	}
 	rd := &rediscoverer{gap: 2 * time.Minute, run: func() {
-		if cfg.MDNS {
-			if err := mdnsQuery(ctx, cfg, pr); err != nil {
+		if c := rt.Get(); c.MDNS {
+			if err := mdnsQuery(ctx, c, pr); err != nil {
 				log.Printf("mDNS: %v", err)
 			}
 		}
@@ -68,16 +69,10 @@ func main() {
 	pr.lost = rd.trigger
 	go pr.run(ctx)
 	go sc.run(ctx)
-	go runPoller(ctx, cfg, st, pr)
-	if cfg.MDNS {
-		go runMDNS(ctx, cfg, pr)
-	}
-	if cfg.FWCheckOnline {
-		go runFWRef(ctx, ref)
-	}
-	if cfg.CoIoT {
-		go runCoIoT(ctx, cfg, pr, st)
-	}
+	go runPoller(ctx, rt, st, pr)
+	go runMDNS(ctx, rt, pr)
+	go runFWRef(ctx, ref, rt)
+	go runCoIoTManager(ctx, rt, pr, st)
 	go func() {
 		t := time.NewTicker(30 * time.Second)
 		defer t.Stop()
@@ -91,7 +86,7 @@ func main() {
 		}
 	}()
 
-	web := &Web{cfg: cfg, st: st, pr: pr, sc: sc, ref: ref}
+	web := &Web{cfg: rt, st: st, pr: pr, sc: sc, ref: ref}
 	srv := &http.Server{Addr: cfg.Listen, Handler: web.handler(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()
@@ -108,17 +103,23 @@ func main() {
 
 // runPoller fragt bekannte (nicht schlafende) Geräte regelmäßig ab, damit
 // Online-Status, Firmware und Update-Hinweise aktuell bleiben.
-func runPoller(ctx context.Context, cfg *Config, st *Store, pr *Prober) {
-	t := time.NewTicker(cfg.PollInterval)
-	defer t.Stop()
+func runPoller(ctx context.Context, rt *Runtime, st *Store, pr *Prober) {
+	last := time.Now()
 	for {
+		changed := rt.Changed()
+		t := time.NewTimer(time.Until(last.Add(rt.Get().PollInterval)))
 		select {
 		case <-ctx.Done():
+			t.Stop()
 			return
+		case <-changed: // Intervall evtl. geändert: neu rechnen
+			t.Stop()
+			continue
 		case <-t.C:
-			for _, ip := range st.pollTargets() {
-				pr.enqueue(ip, "poll", false)
-			}
+		}
+		last = time.Now()
+		for _, ip := range st.pollTargets() {
+			pr.enqueue(ip, "poll", false)
 		}
 	}
 }

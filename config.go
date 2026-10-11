@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"log"
 	"net/netip"
 	"os"
@@ -29,6 +31,11 @@ type Config struct {
 	SleepyOfflineAfter time.Duration
 	SkipIfaces         []string
 	Debug              bool
+	WifiGood           int    // RSSI ab dem das WLAN "gut" ist
+	WifiOK             int    // RSSI ab dem das WLAN "ausreichend" ist
+	ScanCIDRsRaw       string // wie eingegeben, für die Einstellungsseite
+	WebPasswordHash    string // aus der Einstellungsseite (PBKDF2), hat Vorrang vor WebPassword
+	offlineFromEnv     bool
 }
 
 func loadConfig() *Config {
@@ -50,30 +57,61 @@ func loadConfig() *Config {
 		SleepyOfflineAfter: envDur("SLEEPY_OFFLINE_AFTER", 26*time.Hour),
 		SkipIfaces:         strings.Split(env("SKIP_IFACES", "docker,br-,veth,virbr,vEthernet,lxc,cni,flannel,tun,tap,wg,zt"), ","),
 		Debug:              envBool("DEBUG", false),
+		WifiGood:           envInt("WIFI_GOOD", -67),
+		WifiOK:             envInt("WIFI_OK", -79),
+		ScanCIDRsRaw:       os.Getenv("SCAN_CIDRS"),
+		offlineFromEnv:     os.Getenv("OFFLINE_AFTER") != "",
 	}
 	c.OfflineAfter = envDur("OFFLINE_AFTER", 3*c.PollInterval+30*time.Second)
-	for _, f := range strings.FieldsFunc(os.Getenv("SCAN_CIDRS"), func(r rune) bool { return r == ',' || r == ' ' || r == ';' }) {
-		p, err := netip.ParsePrefix(f)
-		if err != nil {
-			// einzelne IP erlaubt
-			if a, err2 := netip.ParseAddr(f); err2 == nil {
-				p = netip.PrefixFrom(a, a.BitLen())
-			} else {
-				log.Fatalf("SCAN_CIDRS: %q ist kein gültiges Netz: %v", f, err)
-			}
-		}
-		if !p.Addr().Is4() {
-			log.Fatalf("SCAN_CIDRS: %q - nur IPv4 wird unterstützt", f)
-		}
-		if p.Bits() < 16 {
-			log.Fatalf("SCAN_CIDRS: %q ist größer als /16 - bitte kleiner wählen", f)
-		}
-		c.ScanCIDRs = append(c.ScanCIDRs, p.Masked())
+	var err error
+	if c.ScanCIDRs, err = parseCIDRs(c.ScanCIDRsRaw); err != nil {
+		log.Fatalf("SCAN_CIDRS: %v", err)
+	}
+	if err := c.validate(); err != nil {
+		log.Fatal(err)
 	}
 	if c.ScanConcurrency < 1 {
 		c.ScanConcurrency = 1
 	}
 	return c
+}
+
+// parseCIDRs liest "192.168.1.0/24, 10.0.0.5" (Komma, Leerzeichen oder Semikolon).
+func parseCIDRs(raw string) ([]netip.Prefix, error) {
+	var out []netip.Prefix
+	for _, f := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ' ' || r == ';' || r == '\n' || r == '\r' }) {
+		p, err := netip.ParsePrefix(f)
+		if err != nil {
+			a, err2 := netip.ParseAddr(f) // einzelne IP erlaubt
+			if err2 != nil {
+				return nil, fmt.Errorf("%q ist kein gültiges Netz", f)
+			}
+			p = netip.PrefixFrom(a, a.BitLen())
+		}
+		if !p.Addr().Is4() {
+			return nil, fmt.Errorf("%q: nur IPv4 wird unterstützt", f)
+		}
+		if p.Bits() < 16 {
+			return nil, fmt.Errorf("%q ist größer als /16 - bitte kleiner wählen", f)
+		}
+		out = append(out, p.Masked())
+	}
+	return out, nil
+}
+
+// validate prüft Werte, die auch über die Einstellungsseite kommen können.
+func (c *Config) validate() error {
+	switch {
+	case c.ScanInterval < time.Minute:
+		return errors.New("Scan-Intervall muss mindestens 1 Minute sein")
+	case c.PollInterval < 10*time.Second:
+		return errors.New("Abfrage-Intervall muss mindestens 10 Sekunden sein")
+	case c.SleepyOfflineAfter < time.Hour:
+		return errors.New("Offline-Grenze für Akkugeräte muss mindestens 1 Stunde sein")
+	case c.WifiGood > -20 || c.WifiOK < -100 || c.WifiOK >= c.WifiGood:
+		return errors.New("WLAN-Grenzen: es muss gelten -100 ≤ ausreichend < gut ≤ -20 dBm")
+	}
+	return nil
 }
 
 func env(k, def string) string {

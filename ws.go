@@ -90,7 +90,7 @@ func (w *Web) handleWS(conn *websocket.Conn) {
 			if f.ID/10 < round {
 				continue // Antwort auf eine ältere Runde
 			}
-			if w.cfg.ShellyPassword == "" || round > 0 {
+			if w.cfg.Get().ShellyPassword == "" || round > 0 {
 				d.AuthEnable, d.AuthStatus = true, "missing"
 				if round > 0 {
 					d.AuthStatus = "failed"
@@ -109,7 +109,7 @@ func (w *Web) handleWS(conn *websocket.Conn) {
 			}
 			if json.Unmarshal([]byte(f.Error.Message), &ch) == nil && ch.Nonce != 0 {
 				round++
-				auth = rpcAuth("admin", w.cfg.ShellyPassword, ch.Realm, ch.Nonce, rand.Int64N(1<<31))
+				auth = rpcAuth("admin", w.cfg.Get().ShellyPassword, ch.Realm, ch.Nonce, rand.Int64N(1<<31))
 				sendAll()
 			}
 		case f.ID%10 == rpcInfo && f.Result != nil:

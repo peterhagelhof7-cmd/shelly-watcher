@@ -63,7 +63,7 @@ func skipIface(cfg *Config, name string) bool {
 // Scanner prüft periodisch alle Adressen der LAN-Netze auf offenen Port 80
 // und lässt offene Adressen vom Prober untersuchen.
 type Scanner struct {
-	cfg      *Config
+	cfg      *Runtime
 	pr       *Prober
 	running  atomic.Bool
 	mu       sync.Mutex
@@ -72,20 +72,35 @@ type Scanner struct {
 	trigger  chan struct{}
 }
 
-func newScanner(cfg *Config, pr *Prober) *Scanner {
+func newScanner(cfg *Runtime, pr *Prober) *Scanner {
 	return &Scanner{cfg: cfg, pr: pr, trigger: make(chan struct{}, 1)}
 }
 
 func (s *Scanner) run(ctx context.Context) {
-	t := time.NewTicker(s.cfg.ScanInterval)
-	defer t.Stop()
 	for {
 		s.scan(ctx)
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-		case <-s.trigger:
+		last := time.Now()
+	wait:
+		for {
+			// Bei geänderten Einstellungen neu rechnen; neue Netze sofort scannen.
+			c := s.cfg.Get()
+			changed := s.cfg.Changed()
+			t := time.NewTimer(time.Until(last.Add(c.ScanInterval)))
+			select {
+			case <-ctx.Done():
+				t.Stop()
+				return
+			case <-t.C:
+				break wait
+			case <-s.trigger:
+				t.Stop()
+				break wait
+			case <-changed:
+				t.Stop()
+				if s.cfg.Get().ScanCIDRsRaw != c.ScanCIDRsRaw {
+					break wait
+				}
+			}
 		}
 	}
 }
@@ -103,12 +118,13 @@ func (s *Scanner) requestScan() bool {
 }
 
 func (s *Scanner) targets() []netip.Prefix {
-	if len(s.cfg.ScanCIDRs) > 0 {
-		return s.cfg.ScanCIDRs
+	c := s.cfg.Get()
+	if len(c.ScanCIDRs) > 0 {
+		return c.ScanCIDRs
 	}
 	var nets []netip.Prefix
 	seen := map[netip.Prefix]bool{}
-	for _, li := range lanInterfaces(s.cfg) {
+	for _, li := range lanInterfaces(c) {
 		p := li.prefix
 		if p.Bits() < 22 {
 			// Großes Netz: automatisch nur das eigene /24 scannen.
@@ -142,7 +158,7 @@ func (s *Scanner) scan(ctx context.Context) {
 	}
 	debugf("Scan startet: %s", strings.Join(names, ", "))
 
-	sem := make(chan struct{}, s.cfg.ScanConcurrency)
+	sem := make(chan struct{}, s.cfg.Get().ScanConcurrency)
 	var wg sync.WaitGroup
 	var hits atomic.Int32
 	d := net.Dialer{Timeout: 700 * time.Millisecond}

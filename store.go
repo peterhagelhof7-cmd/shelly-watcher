@@ -52,19 +52,18 @@ type Device struct {
 }
 
 type Store struct {
-	mu      sync.Mutex
-	devs    map[string]*Device
-	path    string
-	dirty   bool
-	offline time.Duration
-	sleepy  time.Duration
-	ref     *FWRef
+	mu    sync.Mutex
+	devs  map[string]*Device
+	path  string
+	dirty bool
+	cfg   *Runtime
+	ref   *FWRef
 }
 
-func newStore(cfg *Config) *Store {
-	s := &Store{devs: map[string]*Device{}, offline: cfg.OfflineAfter, sleepy: cfg.SleepyOfflineAfter}
-	if cfg.DataDir != "" {
-		s.path = filepath.Join(cfg.DataDir, "devices.json")
+func newStore(cfg *Runtime) *Store {
+	s := &Store{devs: map[string]*Device{}, cfg: cfg}
+	if dir := cfg.Get().DataDir; dir != "" {
+		s.path = filepath.Join(dir, "devices.json")
 	}
 	return s
 }
@@ -293,10 +292,11 @@ func (s *Store) get(mac string) (Device, bool) {
 
 func (s *Store) status(d *Device, now time.Time) string {
 	age := now.Sub(d.LastSeen)
+	c := s.cfg.Get()
 	switch {
-	case age <= s.offline:
+	case age <= c.OfflineAfter:
 		return "online"
-	case d.Sleepy && age <= s.sleepy:
+	case d.Sleepy && age <= c.SleepyOfflineAfter:
 		return "sleeping"
 	default:
 		return "offline"
