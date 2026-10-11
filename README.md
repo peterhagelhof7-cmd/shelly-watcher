@@ -8,37 +8,94 @@ Findet **alle Shelly-Geräte im Netzwerk** (Gen1, Plus/Pro (Gen2), Gen3, Gen4, W
 
 ## Schnellstart
 
+> **Vorher:** In [`docker-compose.yml`](docker-compose.yml) bei Bedarf `SHELLY_PASSWORD` (Passwort der Shellys) und `WEB_PASSWORD` (Schutz der Oberfläche) eintragen.
+>
+> **Synology mit dem Paket „Docker“ (z.B. DS415+):** Das geht ohne SSH, siehe [unten](#synology-mit-paket-docker-zb-ds415-dsm-7071--nur-über-die-weboberfläche).
+
 ```sh
 docker compose up -d
 ```
 
 Danach ist die Oberfläche unter `http://<NAS-IP>:8080` erreichbar. Der erste Scan läuft sofort und dauert für ein /24-Netz nur wenige Sekunden.
 
-### Synology mit Paket „Docker“ (z.B. DS415+, DSM 7.0/7.1)
+### Synology mit Paket „Docker“ (z.B. DS415+, DSM 7.0/7.1) – nur über die Weboberfläche
 
-Die Oberfläche des Docker-Pakets kennt keine Compose-Projekte, deshalb wird der Container einmalig per SSH angelegt. Danach erscheint er ganz normal in der Docker-App und lässt sich dort starten, stoppen und das Log einsehen.
+Das Docker-Paket kennt keine Compose-Projekte. Der Container wird deshalb über die **Aufgabenplanung** von DSM angelegt, ganz ohne SSH. Dieselbe Aufgabe hält ihn danach automatisch aktuell. Der Container erscheint anschließend ganz normal in der Docker-App (Start/Stopp, Protokoll).
 
-1. **Systemsteuerung → Terminal & SNMP → SSH-Dienst aktivieren.**
-2. Per SSH als Administrator anmelden (`ssh admin@<NAS-IP>`), dann:
+> **Vor dem Ausführen ausfüllen:** Oben im Script stehen drei Werte. Solange dort `HIER_EINTRAGEN` steht, bricht das Script mit einer Meldung ab und legt nichts an.
+>
+> | Wert | Bedeutung |
+> |---|---|
+> | `SHELLY_PASSWORD` | Passwort deiner Shellys (Gen2+ nutzt immer den Benutzer `admin`). Sind keine geschützt: `''` |
+> | `WEB_PASSWORD` | frei gewähltes Passwort für die Weboberfläche, Benutzer `admin`. Ohne Schutz: `''` |
+> | `PORT` | Port der Weboberfläche, Standard `8080` |
+>
+> Die Passwörter bleiben in einfachen Anführungszeichen `'…'` und dürfen selbst kein `'` enthalten.
+
+1. **Systemsteuerung → Aufgabenplanung → Erstellen → Geplante Aufgabe → Benutzerdefiniertes Script**
+2. Reiter **Allgemein**: Name `shelly-watcher`, Benutzer **root**
+3. Reiter **Zeitplan**: z.B. wöchentlich, Sonntag 04:00 (automatisches Update)
+4. Reiter **Aufgabeneinstellungen** → *Benutzerdefiniertes Script*: das folgende Script einfügen und **die Werte oben ausfüllen**:
+
+```sh
+# shelly-watcher für die Synology-Aufgabenplanung (Benutzer: root).
+# Legt den Container an bzw. aktualisiert ihn. Gefundene Geräte bleiben erhalten.
+
+# ===== VOR DEM AUSFÜHREN AUSFÜLLEN ==========================================
+# Passwort deiner Shellys. Sind keine passwortgeschützt: ''
+SHELLY_PASSWORD='HIER_EINTRAGEN'
+# Passwort für die Weboberfläche (Benutzer: admin). Ohne Schutz: ''
+WEB_PASSWORD='HIER_EINTRAGEN'
+# Port der Weboberfläche
+PORT=8080
+# Passwörter in einfachen Anführungszeichen lassen, sie dürfen selbst kein ' enthalten.
+# ===========================================================================
+
+IMAGE=ghcr.io/peterhagelhof7-cmd/shelly-watcher:latest
+DOCKER=/usr/local/bin/docker
+
+case "$SHELLY_PASSWORD$WEB_PASSWORD" in
+*HIER_EINTRAGEN*)
+	echo "ABBRUCH: Bitte zuerst oben SHELLY_PASSWORD und WEB_PASSWORD ausfüllen (oder '' für keins)."
+	exit 1
+	;;
+esac
+
+$DOCKER pull "$IMAGE" || exit 1
+$DOCKER rm -f shelly-watcher >/dev/null 2>&1
+$DOCKER run -d --name shelly-watcher \
+	--network host --restart unless-stopped -m 64m \
+	-e TZ=Europe/Berlin \
+	-e LISTEN=":$PORT" \
+	-e SHELLY_PASSWORD="$SHELLY_PASSWORD" \
+	-e WEB_PASSWORD="$WEB_PASSWORD" \
+	-v shelly-data:/data \
+	"$IMAGE" || exit 1
+echo "OK: shelly-watcher läuft, Oberfläche unter http://<NAS-IP>:$PORT"
+```
+
+5. Speichern, die Aufgabe markieren und **Ausführen** klicken. Nach etwa einer Minute ist die Oberfläche unter `http://<NAS-IP>:8080` erreichbar.
+
+- **Ergebnis prüfen:** Aufgabe markieren → **Aktion → Ergebnis anzeigen**. Dort steht `OK: …` oder der Grund für einen Abbruch.
+- **Passwörter später ändern:** Aufgabe bearbeiten, Werte anpassen, erneut **Ausführen**. Die gefundenen Geräte bleiben erhalten, weil sie im Volume `shelly-data` liegen.
+- **Alte Image-Versionen** nach Updates lassen sich in der Docker-App unter *Image* löschen.
+- Das Script liegt auch im Repo: [`synology/aufgabenplanung.sh`](synology/aufgabenplanung.sh).
+
+<details>
+<summary>Alternative per SSH mit docker-compose</summary>
+
+> **Vorher:** In `docker-compose.yml` bei Bedarf `SHELLY_PASSWORD` und `WEB_PASSWORD` eintragen (die Zeilen sind dort auskommentiert).
 
 ```sh
 sudo mkdir -p /volume1/docker/shelly-watcher && cd /volume1/docker/shelly-watcher
 sudo curl -LO https://raw.githubusercontent.com/peterhagelhof7-cmd/shelly-watcher/main/docker-compose.yml
-sudo vi docker-compose.yml          # optional: SHELLY_PASSWORD, WEB_PASSWORD … eintragen
+sudo vi docker-compose.yml
 sudo docker-compose up -d
 ```
 
-**Update auf eine neue Version:**
+Update: `sudo docker-compose pull && sudo docker-compose up -d`
 
-```sh
-cd /volume1/docker/shelly-watcher && sudo docker-compose pull && sudo docker-compose up -d
-```
-
-Ohne Compose-Datei geht es auch mit einem einzigen Befehl:
-
-```sh
-sudo docker run -d --name shelly-watcher --network host --restart unless-stopped -m 64m   -e TZ=Europe/Berlin -v shelly-data:/data ghcr.io/peterhagelhof7-cmd/shelly-watcher:latest
-```
+</details>
 
 Die Meldung `Your kernel does not support swap limit capabilities` ist auf Synology normal und harmlos.
 
