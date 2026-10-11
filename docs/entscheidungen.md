@@ -35,3 +35,12 @@ Laufendes Log nicht offensichtlicher Entscheidungen, neueste unten.
 **Gen1-Liste `api.shelly.cloud/files/firmware`:** am 2026-10-11 live geprüft, liefert 42 Gen1-Modelle mit stabiler und Beta-Version. Für Gen2+ habe ich **keinen** dokumentierten Endpunkt gefunden. Versuche mit `updates.shelly.cloud/update/<app>` liefen ins Leere, die Doku nennt nur die gerätelokale Abfrage (`Shelly.CheckForUpdate` / `sys.available_updates`). Ich habe deshalb bewusst keine URL geraten. Für Gen2+ gelten nur Gerätemeldung und Netzvergleich.
 
 **Beta zählt nie als Referenz**, sonst wäre jedes Gerät auf Stable „veraltet“, sobald ein anderes eine Beta fährt. Eine Vorabversion gilt beim Vergleich als älter als die zugehörige Release-Version (`1.5.0-beta1 < 1.5.0`).
+
+## 2026-10-11 – IP-Wechsel (DHCP)
+
+**Geräte werden über die MAC geführt.** Eine neue IP aktualisiert den vorhandenen Eintrag, Name, „Zuerst gesehen“ und Quellen bleiben. Eine IP gehört immer nur einem Eintrag. Wer sie neu meldet, bekommt sie, beim bisherigen Inhaber wird sie gelöscht (`Store.setIP`). Vorher galt das nur für vollständige Abfragen. Ein CoIoT-Hinweis konnte kurzzeitig zwei Einträge mit derselben IP erzeugen (Bug, jetzt behoben).
+
+**Sofortige Neusuche bei Verlust.** Schlägt der regelmäßige Poll eines bisher fehlerfreien Geräts fehl oder antwortet unter seiner IP plötzlich ein anderes Gerät, startet sofort eine mDNS-Suche und ein Scan. Vorher dauerte das bis zum nächsten regulären Scan, also bis zu 15 min.
+- Ausgelöst wird nur beim **Übergang** ok → Fehler. Ein ausgeschaltetes Gerät würde sonst minütlich einen Scan auslösen.
+- Ausgelöst wird nur beim **Poll** und nicht bei Abfragen nach CoIoT/WebSocket, denn ein wieder eingeschlafenes Akkugerät ist kein Verlust.
+- Höchstens eine Neusuche alle 2 min, auch wenn mehrere Geräte gleichzeitig verschwinden (z.B. beim Neustart des Routers).

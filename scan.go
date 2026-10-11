@@ -201,3 +201,27 @@ func (s *Scanner) info() (time.Time, []string, bool) {
 	defer s.mu.Unlock()
 	return s.lastScan, s.lastNets, s.running.Load()
 }
+
+// rediscoverer stößt eine sofortige Neusuche (mDNS + Scan) an, wenn ein
+// bekanntes Gerät verloren geht, höchstens einmal pro gap. So taucht ein
+// Gerät nach einem DHCP-Wechsel binnen Sekunden unter der neuen IP auf statt
+// erst beim nächsten regulären Scan.
+type rediscoverer struct {
+	mu   sync.Mutex
+	last time.Time
+	gap  time.Duration
+	run  func()
+}
+
+func (r *rediscoverer) trigger(ip string) {
+	r.mu.Lock()
+	if !r.last.IsZero() && time.Since(r.last) < r.gap {
+		r.mu.Unlock()
+		debugf("%s verloren, Neusuche lief erst vor kurzem", ip)
+		return
+	}
+	r.last = time.Now()
+	r.mu.Unlock()
+	log.Printf("%s antwortet nicht mehr wie erwartet - suche sofort neu (IP-Wechsel?)", ip)
+	go r.run()
+}

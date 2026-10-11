@@ -46,6 +46,11 @@ type Prober struct {
 
 	mu   sync.Mutex
 	last map[string]time.Time
+
+	// lost wird aufgerufen, wenn ein bekanntes Gerät unter seiner IP nicht
+	// mehr antwortet oder dort plötzlich ein anderes Gerät sitzt (z.B. nach
+	// einem DHCP-Wechsel). Darf nil sein.
+	lost func(ip string)
 }
 
 const (
@@ -127,13 +132,30 @@ func (p *Prober) run(ctx context.Context) {
 }
 
 func (p *Prober) handle(ctx context.Context, r probeReq) {
+	expect := p.st.macAt(r.ip)
 	d, err := p.probe(ctx, r.ip)
 	if err != nil {
-		if !errors.Is(err, errNotShelly) {
-			debugf("%s (%s): %v", r.ip, r.source, err)
-			p.st.failed(r.ip, err)
+		if expect == "" {
+			if !errors.Is(err, errNotShelly) {
+				debugf("%s (%s): %v", r.ip, r.source, err)
+			}
+			return
+		}
+		if errors.Is(err, errNotShelly) {
+			err = errors.New("unter dieser IP antwortet kein Shelly mehr")
+		}
+		debugf("%s (%s): %v", r.ip, r.source, err)
+		// Nur beim regelmäßigen Poll und nur beim Übergang ok -> Fehler neu
+		// suchen: Ausgeschaltete Geräte sollen keinen Dauer-Scan auslösen, und
+		// schlafende Akkugeräte (Abfrage nach CoIoT/WS) sind kein Verlust.
+		if p.st.failed(r.ip, err) && r.source == "poll" && p.lost != nil {
+			p.lost(r.ip)
 		}
 		return
+	}
+	if expect != "" && expect != normMAC(d.MAC) && p.lost != nil {
+		// Unter der IP sitzt jetzt ein anderes Gerät; das bisherige ist umgezogen.
+		p.lost(r.ip)
 	}
 	p.st.apply(d, r.source)
 }

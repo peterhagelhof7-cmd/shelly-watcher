@@ -42,6 +42,8 @@ Falls Port 8080 auf dem NAS belegt ist: `LISTEN: ":8090"` setzen.
 | **Outbound WebSocket** `ws://<NAS-IP>:8080/ws` | Gen2+-**Akkugeräte** (Plus H&T, H&T Gen3, Plus Smoke, Flood Gen4 …) | im Gerät unter *Settings → Outbound WebSocket* eintragen. Das Gerät meldet sich bei jedem Aufwachen |
 | **manuell** | einzelne IP | Eingabefeld in der Oberfläche |
 
+Geräte werden über ihre **MAC-Adresse** geführt. Bekommt ein Shelly per DHCP eine neue IP, bleibt es derselbe Eintrag. Antwortet ein bekanntes Gerät nicht mehr unter seiner IP, startet sofort eine Neusuche, und es taucht nach wenigen Sekunden unter der neuen Adresse wieder auf.
+
 Die Modellerkennung ist generisch: Jedes Gerät, das auf `/shelly` als Shelly antwortet, wird erfasst, auch Modelle, die es beim Schreiben dieses Programms noch nicht gab. Für lesbare Namen („Shelly Plus 1PM“ statt `SNSW-001P16EU`) gibt es eine Tabelle mit über 150 Modellen. Sie wird per `go generate` aus [aioshelly](https://github.com/home-assistant-libs/aioshelly) (Home Assistant, Apache-2.0) erzeugt. Unbekannte Codes werden mit dem `app`-Namen des Geräts angezeigt.
 
 **Modell, MAC und Firmware-Version werden auch ohne Passwort gelesen.** `/shelly` ist bei allen Generationen frei zugänglich. Für Gerätename, WLAN-Signal, Laufzeit und die Update-Abfrage am Gerät wird bei passwortgeschützten Geräten `SHELLY_PASSWORD` benötigt (Gen1: Basic-Auth, Gen2+: Digest SHA-256).

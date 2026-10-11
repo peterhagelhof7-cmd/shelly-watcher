@@ -86,15 +86,7 @@ func (s *Store) apply(obs *Device, source string) {
 		s.devs[key] = d
 		log.Printf("neues Gerät: %s %s (%s) fw %s via %s", key, obs.Model, obs.IP, obs.FWVersion, source)
 	}
-	// Eine andere Adresse mit derselben MAC verdrängt die alte (DHCP-Wechsel).
-	if obs.IP != "" {
-		for k, o := range s.devs {
-			if k != key && o.IP == obs.IP {
-				o.IP = ""
-			}
-		}
-		d.IP = obs.IP
-	}
+	s.setIP(d, obs.IP)
 	setStr(&d.ID, obs.ID)
 	setStr(&d.Model, obs.Model)
 	setStr(&d.App, obs.App)
@@ -171,9 +163,7 @@ func (s *Store) hint(obs *Device, source string) {
 	}
 	if d != nil {
 		d.LastSeen = time.Now()
-		if obs.IP != "" {
-			d.IP = obs.IP
-		}
+		s.setIP(d, obs.IP)
 		if source != "" && !slices.Contains(d.Sources, source) {
 			d.Sources = append(d.Sources, source)
 			sort.Strings(d.Sources)
@@ -188,15 +178,47 @@ func (s *Store) hint(obs *Device, source string) {
 	}
 }
 
-// failed vermerkt einen fehlgeschlagenen Abruf für ein bekanntes Gerät.
-func (s *Store) failed(ip string, err error) {
+// setIP ordnet dem Gerät seine aktuelle IP zu. Geräte werden über die MAC
+// geführt; wechselt die IP (DHCP), bleibt es derselbe Eintrag. Hatte ein
+// anderes Gerät diese IP noch eingetragen, ist sie dort veraltet und wird
+// gelöscht, damit nie zwei Einträge dieselbe IP zeigen. Aufrufer hält s.mu.
+func (s *Store) setIP(d *Device, ip string) {
+	if ip == "" || d.IP == ip {
+		return
+	}
+	for _, o := range s.devs {
+		if o != d && o.IP == ip {
+			o.IP = ""
+		}
+	}
+	d.IP = ip
+}
+
+// macAt liefert die MAC des Geräts, das unter dieser IP geführt wird.
+func (s *Store) macAt(ip string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for k, d := range s.devs {
+		if d.IP == ip {
+			return k
+		}
+	}
+	return ""
+}
+
+// failed vermerkt einen fehlgeschlagenen Abruf für das Gerät unter dieser IP.
+// Rückgabe true, wenn es vorher fehlerfrei war, also gerade erst verloren ging.
+func (s *Store) failed(ip string, err error) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	lost := false
 	for _, d := range s.devs {
 		if d.IP == ip {
+			lost = lost || d.LastErr == ""
 			d.LastErr = err.Error()
 		}
 	}
+	return lost
 }
 
 func (s *Store) remove(mac string) bool {

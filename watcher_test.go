@@ -335,3 +335,111 @@ func TestAssessFirmware(t *testing.T) {
 		}
 	}
 }
+
+// DHCP-Wechsel: Geräte bleiben über die MAC derselbe Eintrag, eine IP gehört
+// immer nur einem Gerät – über apply (Abfrage) wie über hint (CoIoT).
+func TestIPChange(t *testing.T) {
+	st := newStore(testConfig(""))
+	ipOf := func() map[string]string {
+		m := map[string]string{}
+		for _, d := range st.list() {
+			m[d.MAC] = d.IP
+		}
+		return m
+	}
+	st.apply(&Device{MAC: "AAAAAAAAAAAA", IP: "10.0.0.10", Model: "SHSW-1", Name: "Flur", FWVersion: "1.14.0"}, "scan")
+	first := st.list()[0].FirstSee
+
+	// A zieht nach .11 um: gleicher Eintrag, Name/Firstseen bleiben
+	st.apply(&Device{MAC: "aa:aa:aa:aa:aa:aa", IP: "10.0.0.11", FWVersion: "1.14.0"}, "mdns")
+	l := st.list()
+	if len(l) != 1 || l[0].IP != "10.0.0.11" || l[0].Name != "Flur" || !l[0].FirstSee.Equal(first) ||
+		strings.Join(l[0].Sources, ",") != "mdns,scan" {
+		t.Fatalf("nach IP-Wechsel: %+v", l)
+	}
+	// B bekommt die alte IP von A
+	st.apply(&Device{MAC: "BBBBBBBBBBBB", IP: "10.0.0.10"}, "scan")
+	if m := ipOf(); len(m) != 2 || m["AAAAAAAAAAAA"] != "10.0.0.11" || m["BBBBBBBBBBBB"] != "10.0.0.10" {
+		t.Fatalf("alte IP neu vergeben: %v", m)
+	}
+	// C übernimmt per Abfrage die IP von A -> A verliert sie (bis es wiedergefunden wird)
+	st.apply(&Device{MAC: "CCCCCCCCCCCC", IP: "10.0.0.11"}, "scan")
+	if m := ipOf(); m["AAAAAAAAAAAA"] != "" || m["CCCCCCCCCCCC"] != "10.0.0.11" {
+		t.Fatalf("IP doppelt nach apply: %v", m)
+	}
+	// A meldet sich per CoIoT (Kurz-MAC) unter der IP von B -> B verliert sie
+	st.hint(&Device{MAC: "AAAAAA", IP: "10.0.0.10"}, "coiot")
+	if m := ipOf(); m["AAAAAAAAAAAA"] != "10.0.0.10" || m["BBBBBBBBBBBB"] != "" {
+		t.Fatalf("IP doppelt nach CoIoT-Hinweis: %v", m)
+	}
+	if len(st.list()) != 3 {
+		t.Fatalf("es dürfen keine neuen Einträge entstehen: %+v", st.list())
+	}
+}
+
+// Verlust beim Poll löst genau einmal pro Übergang eine Neusuche aus.
+func TestLostTriggersRediscovery(t *testing.T) {
+	srv := fakeGen1(t, false)
+	ip := host(srv)
+	cfg := testConfig("")
+	st := newStore(cfg)
+	pr := newProber(cfg, st)
+	var lost []string
+	pr.lost = func(ip string) { lost = append(lost, ip) }
+	ctx := context.Background()
+
+	pr.handle(ctx, probeReq{ip, "scan"})
+	if st.macAt(ip) != "E8DB84AABBCC" || len(lost) != 0 {
+		t.Fatalf("Erstfund: mac=%q lost=%v", st.macAt(ip), lost)
+	}
+	srv.Close() // Gerät weg (DHCP-Wechsel oder aus)
+
+	pr.handle(ctx, probeReq{ip, "coiot"}) // schlafendes Gerät: kein Verlust
+	if len(lost) != 0 {
+		t.Fatalf("Abfrage nach CoIoT darf keine Neusuche auslösen: %v", lost)
+	}
+	st.apply(&Device{MAC: "E8DB84AABBCC", IP: ip}, "scan") // wieder ok
+	pr.handle(ctx, probeReq{ip, "poll"})
+	pr.handle(ctx, probeReq{ip, "poll"})
+	pr.handle(ctx, probeReq{ip, "poll"})
+	if len(lost) != 1 || lost[0] != ip {
+		t.Fatalf("Neusuche sollte genau einmal ausgelöst werden: %v", lost)
+	}
+	if l := st.list(); len(l) != 1 || l[0].LastErr == "" {
+		t.Fatalf("Gerät muss mit Fehlervermerk erhalten bleiben: %+v", l)
+	}
+}
+
+// Unter der IP eines bekannten Geräts antwortet plötzlich ein anderes Shelly.
+func TestOtherDeviceAtKnownIP(t *testing.T) {
+	srv := fakeGen1(t, false) // MAC E8DB84AABBCC
+	defer srv.Close()
+	ip := host(srv)
+	cfg := testConfig("")
+	st := newStore(cfg)
+	pr := newProber(cfg, st)
+	var lost []string
+	pr.lost = func(ip string) { lost = append(lost, ip) }
+	st.apply(&Device{MAC: "111111111111", IP: ip, Model: "SNSW-001P16EU"}, "scan")
+
+	pr.handle(context.Background(), probeReq{ip, "poll"})
+	m := map[string]string{}
+	for _, d := range st.list() {
+		m[d.MAC] = d.IP
+	}
+	if len(lost) != 1 || m["111111111111"] != "" || m["E8DB84AABBCC"] != ip {
+		t.Fatalf("lost=%v ips=%v", lost, m)
+	}
+}
+
+func TestRediscovererThrottle(t *testing.T) {
+	runs := make(chan struct{}, 10)
+	r := &rediscoverer{gap: time.Hour, run: func() { runs <- struct{}{} }}
+	r.trigger("a")
+	r.trigger("b")
+	r.trigger("c")
+	time.Sleep(50 * time.Millisecond)
+	if len(runs) != 1 {
+		t.Fatalf("Neusuche %d-mal statt einmal", len(runs))
+	}
+}

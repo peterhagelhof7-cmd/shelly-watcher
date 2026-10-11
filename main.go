@@ -57,6 +57,15 @@ func main() {
 			log.Printf("Netz erkannt: %s %s", li.ifi.Name, li.prefix)
 		}
 	}
+	rd := &rediscoverer{gap: 2 * time.Minute, run: func() {
+		if cfg.MDNS {
+			if err := mdnsQuery(ctx, cfg, pr); err != nil {
+				log.Printf("mDNS: %v", err)
+			}
+		}
+		sc.requestScan()
+	}}
+	pr.lost = rd.trigger
 	go pr.run(ctx)
 	go sc.run(ctx)
 	go runPoller(ctx, cfg, st, pr)
