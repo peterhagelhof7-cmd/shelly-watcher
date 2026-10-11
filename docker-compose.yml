@@ -1,4 +1,5 @@
-# shelly-watcher – z.B. für Synology Container Manager (Projekt) oder `docker compose up -d`
+# shelly-watcher – `docker-compose up -d` (Synology Docker-Paket per SSH) bzw. `docker compose up -d`
+# oder als Projekt im Synology Container Manager
 services:
   shelly-watcher:
     image: ghcr.io/peterhagelhof7-cmd/shelly-watcher:latest

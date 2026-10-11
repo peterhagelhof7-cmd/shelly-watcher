@@ -44,3 +44,9 @@ Laufendes Log nicht offensichtlicher Entscheidungen, neueste unten.
 - Ausgelöst wird nur beim **Übergang** ok → Fehler. Ein ausgeschaltetes Gerät würde sonst minütlich einen Scan auslösen.
 - Ausgelöst wird nur beim **Poll** und nicht bei Abfragen nach CoIoT/WebSocket, denn ein wieder eingeschlafenes Akkugerät ist kein Verlust.
 - Höchstens eine Neusuche alle 2 min, auch wenn mehrere Geräte gleichzeitig verschwinden (z.B. beim Neustart des Routers).
+
+## 2026-10-11 – Synology ohne Container Manager
+
+**Die DS415+ hat nur das alte Paket „Docker“** (Hinweis des Nutzers), ohne Compose-Projekte in der Oberfläche. Die Anleitung legt den Container deshalb einmalig per SSH mit `docker-compose` an, einem Docker run-Befehl als Alternative. Die Compose-Datei ist mit `docker-compose` 1.28.5 (der Version im Synology-Paket) per `config` geprüft und läuft unverändert.
+
+**Image ohne Attestations** (`provenance: false`, `sbom: false`): buildx hängt sonst Einträge mit Plattform „unknown/unknown“ an den Image-Index. Ältere Docker-Versionen (Synology-Paket: 20.10) kommen damit schlecht zurecht. Der Index enthält jetzt nur noch die drei echten Plattformen.

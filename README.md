@@ -14,19 +14,37 @@ docker compose up -d
 
 Danach ist die Oberfläche unter `http://<NAS-IP>:8080` erreichbar. Der erste Scan läuft sofort und dauert für ein /24-Netz nur wenige Sekunden.
 
-### Synology DS415+ (DSM 7.2, Container Manager)
+### Synology mit Paket „Docker“ (z.B. DS415+, DSM 7.0/7.1)
 
-1. In der **File Station** einen Ordner anlegen, z.B. `docker/shelly-watcher`.
-2. **Container Manager → Projekt → Erstellen**: Name `shelly-watcher`, Pfad = der Ordner, Quelle „docker-compose.yml erstellen“ und den Inhalt von [`docker-compose.yml`](docker-compose.yml) einfügen.
-3. Bei Bedarf `SHELLY_PASSWORD` bzw. `WEB_PASSWORD` eintragen, dann **Fertig**. Das Image (`ghcr.io/peterhagelhof7-cmd/shelly-watcher`) wird automatisch geladen.
+Die Oberfläche des Docker-Pakets kennt keine Compose-Projekte, deshalb wird der Container einmalig per SSH angelegt. Danach erscheint er ganz normal in der Docker-App und lässt sich dort starten, stoppen und das Log einsehen.
 
-Unter DSM 7.0/7.1 (Paket „Docker“) geht es per SSH genauso:
+1. **Systemsteuerung → Terminal & SNMP → SSH-Dienst aktivieren.**
+2. Per SSH als Administrator anmelden (`ssh admin@<NAS-IP>`), dann:
 
 ```sh
 sudo mkdir -p /volume1/docker/shelly-watcher && cd /volume1/docker/shelly-watcher
 sudo curl -LO https://raw.githubusercontent.com/peterhagelhof7-cmd/shelly-watcher/main/docker-compose.yml
-sudo docker-compose up -d        # bzw. "docker compose up -d"
+sudo vi docker-compose.yml          # optional: SHELLY_PASSWORD, WEB_PASSWORD … eintragen
+sudo docker-compose up -d
 ```
+
+**Update auf eine neue Version:**
+
+```sh
+cd /volume1/docker/shelly-watcher && sudo docker-compose pull && sudo docker-compose up -d
+```
+
+Ohne Compose-Datei geht es auch mit einem einzigen Befehl:
+
+```sh
+sudo docker run -d --name shelly-watcher --network host --restart unless-stopped -m 64m   -e TZ=Europe/Berlin -v shelly-data:/data ghcr.io/peterhagelhof7-cmd/shelly-watcher:latest
+```
+
+Die Meldung `Your kernel does not support swap limit capabilities` ist auf Synology normal und harmlos.
+
+### Synology mit Container Manager (DSM 7.2)
+
+**Container Manager → Projekt → Erstellen**, als Quelle „docker-compose.yml erstellen“ wählen und den Inhalt von [`docker-compose.yml`](docker-compose.yml) einfügen.
 
 > **Wichtig: `network_mode: host`.** Nur damit sieht der Container das echte LAN und empfängt mDNS-/CoIoT-Multicast. Im Bridge-Modus funktioniert nur der Subnetz-Scan, und `SCAN_CIDRS` muss gesetzt werden.
 

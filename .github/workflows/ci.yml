@@ -47,6 +47,10 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64,linux/arm/v7
           push: ${{ github.event_name != 'pull_request' }}
+          # keine Attestations ("unknown/unknown"-Einträge im Index): ältere
+          # Docker-Versionen wie im Synology-Paket (20.10) kommen damit schlecht zurecht
+          provenance: false
+          sbom: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: VERSION=${{ github.ref_type == 'tag' && github.ref_name || format('main-{0}', github.sha) }}
