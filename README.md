@@ -203,6 +203,16 @@ Die meisten Werte lassen sich auch in der Oberfläche unter **Einstellungen** ä
 - Es wird ein gemeinsames Shelly-Passwort für alle Geräte unterstützt.
 - Nur IPv4.
 
+## Versionen und Images
+
+| Image-Tag | Inhalt |
+|---|---|
+| `latest` | neueste freigegebene Version (empfohlen) |
+| `1.0.0`, `1.0` | eine bestimmte Version |
+| `edge` | aktueller Entwicklungsstand von `main`, ungetestet |
+
+Versionshinweise: [Releases](https://github.com/peterhagelhof7-cmd/shelly-watcher/releases).
+
 ## Entwicklung
 
 ```sh

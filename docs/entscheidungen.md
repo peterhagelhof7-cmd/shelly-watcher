@@ -76,3 +76,5 @@ Laufendes Log nicht offensichtlicher Entscheidungen, neueste unten.
 **Notausgang `SETTINGS_RESET=true`:** Wer sich mit einem in der Oberfläche gesetzten Web-Passwort aussperrt, kommt ohne SSH nicht an `/data/settings.json` (Docker-Volume). Die Variable lässt sich im Aufgabenplanungs-Script setzen und verwirft die Datei beim Start.
 
 **Kein `confirm()`-Dialog** beim Entfernen eines Passworts. Stattdessen bestätigt ein zweiter Klick. Das ist robuster und blockiert die Seite nicht.
+
+**Image-Tags: `latest` nur für Releases.** Bis 1.0.0 setzte jeder Push auf `main` `latest`. Das Synology-Script aktualisiert aber wöchentlich `:latest` und hätte damit jeden Zwischenstand installiert. Jetzt gilt: `latest` und `X.Y.Z`/`X.Y` nur bei einem Tag `vX.Y.Z`, `main` erzeugt `edge`.
