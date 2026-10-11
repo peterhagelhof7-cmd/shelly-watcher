@@ -107,6 +107,22 @@ Die Meldung `Your kernel does not support swap limit capabilities` ist auf Synol
 
 Falls Port 8080 auf dem NAS belegt ist: `LISTEN: ":8090"` setzen.
 
+## Oberfläche
+
+**Übersicht:** alle Geräte mit Status, Modell, Firmware-Stand, IP und WLAN-Signal. Das Signal ist farbig markiert:
+
+| Farbe | Signal | Bedeutung |
+|---|---|---|
+| grün | ab −67 dBm | gut |
+| gelb | −68 bis −79 dBm | ausreichend |
+| rot | −80 dBm und schwächer | schlecht, Verbindungsabbrüche wahrscheinlich |
+
+Geräte am LAN-Kabel (Pro-Serie) zeigen „LAN“.
+
+**Detailseite** (Klick auf den Gerätenamen): Schaltzustand und Messwerte aller Kanäle mit den im Gerät vergebenen Kanalnamen, also Leistung, Spannung, Strom, Energie, Temperatur, Luftfeuchte, Rollladenposition, Eingänge und bei 3-Phasen-Zählern jede Phase einzeln. Dazu Laufzeit, Firmware, WLAN und Shelly-Cloud-Status. Die Seite fragt ein erreichbares Gerät beim Öffnen live ab und aktualisiert sich alle 10 Sekunden. Bei schlafenden Akkugeräten erscheint der zuletzt gemeldete Stand. Die Messwerte stammen aus dem Status, den der minütliche Poll ohnehin liest, sie kosten also keine zusätzlichen Abfragen.
+
+**Shelly-Konto:** Mit welchem Konto ein Gerät verknüpft ist, gibt es über seine lokale Schnittstelle nicht preis. Angezeigt werden, ob die Cloud aktiviert und verbunden ist, und bei Gen2+ der Cloud-Server.
+
 ## Wie Geräte gefunden werden
 
 | Weg | Findet | Hinweis |
@@ -159,7 +175,8 @@ Beta-Versionen zählen nie als Referenz. In der Oberfläche gibt es dafür die K
 
 | Methode | Pfad | |
 |---|---|---|
-| GET | `/api/devices` | alle Geräte als JSON |
+| GET | `/api/devices` | alle Geräte als JSON (ohne Messwerte) |
+| GET | `/api/devices/{mac}` | ein Gerät mit Schaltzuständen und Messwerten (fragt es live ab) |
 | GET | `/api/devices.csv` | CSV-Export (Excel-tauglich, `;`-getrennt) |
 | POST | `/api/scan` | Scan sofort starten |
 | POST | `/api/probe` (`ip=…`) | einzelne IP abfragen und hinzufügen |

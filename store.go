@@ -37,6 +37,8 @@ type Device struct {
 	Battery  *int      `json:"battery,omitempty"`
 	Cloud    *bool     `json:"cloud,omitempty"`
 	Sleepy   bool      `json:"sleepy"`
+	Wired    bool      `json:"wired,omitempty"` // per LAN-Kabel statt WLAN
+	Detail   *Detail   `json:"detail,omitempty"`
 	Sources  []string  `json:"sources"`
 	FirstSee time.Time `json:"first_seen"`
 	LastSeen time.Time `json:"last_seen"`
@@ -102,6 +104,11 @@ func (s *Store) apply(obs *Device, source string) {
 	// leer heißt dann "kein Update verfügbar".
 	if obs.AuthStatus == "ok" || obs.AuthStatus == "none" {
 		d.FWStable, d.FWBeta = obs.FWStable, obs.FWBeta
+	}
+	if obs.Detail != nil {
+		mergeDetail(d.Detail, obs.Detail)
+		d.Detail = obs.Detail
+		d.Wired = obs.Wired
 	}
 	if obs.AuthStatus != "" {
 		d.AuthEnable = obs.AuthEnable
@@ -243,12 +250,45 @@ func (s *Store) list() []Device {
 		c.Sources = slices.Clone(d.Sources)
 		c.Status = s.status(d, now)
 		c.ModelName = modelName(d.Model, d.App) // immer aktuell, auch nach Tabellen-Update
+		c.Detail = nil                          // Messwerte nur über get() (Detailseite)
 		out = append(out, c)
 	}
 	s.mu.Unlock()
 	assessFirmware(out, s.ref)
 	sort.Slice(out, func(i, j int) bool { return ipLess(out[i].IP, out[j].IP) })
 	return out
+}
+
+// get liefert ein Gerät inklusive Messwerten (Detail).
+func (s *Store) get(mac string) (Device, bool) {
+	s.mu.Lock()
+	d, ok := s.devs[normMAC(mac)]
+	if !ok {
+		s.mu.Unlock()
+		return Device{}, false
+	}
+	c := *d
+	c.Sources = slices.Clone(d.Sources)
+	c.Status = s.status(d, time.Now())
+	c.ModelName = modelName(d.Model, d.App)
+	if d.Detail != nil {
+		dc := *d.Detail
+		dc.Components = slices.Clone(d.Detail.Components)
+		c.Detail = &dc
+	}
+	all := make([]Device, 0, len(s.devs))
+	for _, o := range s.devs {
+		all = append(all, *o)
+	}
+	s.mu.Unlock()
+	// Die Firmware-Bewertung braucht den Vergleich mit allen Geräten.
+	assessFirmware(all, s.ref)
+	for _, o := range all {
+		if o.MAC == c.MAC {
+			c.Outdated, c.FWLatest, c.FWLatestSrc = o.Outdated, o.FWLatest, o.FWLatestSrc
+		}
+	}
+	return c, true
 }
 
 func (s *Store) status(d *Device, now time.Time) string {

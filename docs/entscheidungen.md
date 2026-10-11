@@ -52,3 +52,13 @@ Laufendes Log nicht offensichtlicher Entscheidungen, neueste unten.
 **Image ohne Attestations** (`provenance: false`, `sbom: false`): buildx hängt sonst Einträge mit Plattform „unknown/unknown“ an den Image-Index. Ältere Docker-Versionen (Synology-Paket: 20.10) kommen damit schlecht zurecht. Der Index enthält jetzt nur noch die drei echten Plattformen.
 
 **Hauptweg ist die Aufgabenplanung statt SSH** (Wunsch des Nutzers: nur Weboberfläche). Das Script in `synology/aufgabenplanung.sh` legt den Container per `docker run` an bzw. neu an und dient gleichzeitig als Updater. Die auszufüllenden Werte stehen **oben** und haben den Platzhalter `HIER_EINTRAGEN`. Solange einer davon da ist, bricht das Script ab. Anlass: Die erste Fassung hatte leere Werte, und der Hinweis stand erst unter dem Script. Der Nutzer hat es so ausgeführt und lief ohne Passwörter. Passwörter stehen in einfachen Anführungszeichen. In WSL mit einem Docker-Stub getestet: Abbruch bei Platzhalter, Sonderzeichen (`$ " & ! `` ` `` Leerzeichen`) kommen unverändert an, leere Werte gehen.
+
+## 2026-10-11 – WLAN-Farben, Detailseite, Shelly-Konto
+
+**WLAN-Schwellen:** gut ab −67 dBm, ausreichend bis −79 dBm, darunter schlecht. −67 dBm ist die übliche Grenze für stabiles WLAN, unter −80 dBm sind Abbrüche wahrscheinlich. Gen2+ mit aktiver LAN-IP und ohne WLAN-RSSI gelten als „LAN“.
+
+**Messwerte ohne Zusatzabfragen:** Der Poll liest ohnehin den vollständigen Status (`Shelly.GetStatus` bzw. `/status`). Daraus werden die Kanäle gebildet und gespeichert. Nur die Detailseite liest zusätzlich die Konfiguration (Kanalnamen, Cloud-Server). Namen und Server bleiben bei späteren Polls erhalten (`mergeDetail`). `/api/devices` schickt keine Messwerte mit, damit die Übersicht schlank bleibt.
+
+**Generische Kanäle statt Modelltabellen:** Gen2+ liefert Komponenten als `typ:id`. Alle außer Systemkomponenten (sys, wifi, cloud …) werden angezeigt. Bekannte Felder bekommen deutsche Namen, Einheiten und Umrechnung (Wh → kWh), unbekannte werden roh angezeigt. Damit sind auch künftige Modelle ohne Codeänderung abgedeckt. Gen1 wird aus relays/meters/emeters/lights/rollers/inputs und den Sensorfeldern gebildet. Achtung: `meters[].total` ist bei Gen1 in **Wattminuten**, `emeters[].total` dagegen in Wh.
+
+**Shelly-Konto ist lokal nicht lesbar.** Weder Gen1 (`/settings`, `/status`) noch Gen2+ (`Shelly.GetConfig`, `Cloud.GetConfig`) liefern das verknüpfte Konto. Angezeigt werden Cloud aktiviert/verbunden und bei Gen2+ der Cloud-Server. Eine Zuordnung zum Konto wäre nur über die Shelly-Cloud-API mit dem Auth-Key je Konto möglich (legacy `device/all_status`, laut Shelly abgekündigt). Das ist offen und wird mit dem Nutzer entschieden.

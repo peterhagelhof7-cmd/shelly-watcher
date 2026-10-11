@@ -70,10 +70,13 @@ func fakeGen1(t *testing.T, auth bool) *httptest.Server {
 		}
 	}
 	mux.HandleFunc("/settings", protected(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"name":"Flurlicht","device":{"type":"SHSW-1","mac":"E8DB84AABBCC","hostname":"shelly1-AABBCC"},"fw":"20230913-112003/v1.14.0-gcb84623"}`)
+		fmt.Fprint(w, `{"name":"Flurlicht","device":{"type":"SHSW-1","mac":"E8DB84AABBCC","hostname":"shelly1-AABBCC"},"fw":"20230913-112003/v1.14.0-gcb84623","relays":[{"name":"Deckenlampe"}]}`)
 	}))
 	mux.HandleFunc("/status", protected(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"wifi_sta":{"connected":true,"ssid":"Haus","ip":"192.168.1.20","rssi":-61},"cloud":{"enabled":false,"connected":false},
+		fmt.Fprint(w, `{"wifi_sta":{"connected":true,"ssid":"Haus","ip":"192.168.1.20","rssi":-61},"cloud":{"enabled":true,"connected":false},
+			"relays":[{"ison":true,"has_timer":false,"overpower":false,"source":"input"}],
+			"meters":[{"power":42.5,"overpower":0,"is_valid":true,"counters":[1,2,3],"total":600000}],
+			"inputs":[{"input":1,"event":"","event_cnt":0}],"temperature":51.3,
 			"update":{"status":"pending","has_update":true,"new_version":"20240101-000000/v1.14.1-gabcdef0","old_version":"20230913-112003/v1.14.0-gcb84623","beta_version":"20230913-112003/v1.14.0-gcb84623"},"uptime":3600}`)
 	}))
 	return httptest.NewServer(mux)
@@ -103,8 +106,12 @@ func fakeGen2(t *testing.T, auth bool) *httptest.Server {
 				return
 			}
 		}
-		fmt.Fprint(w, `{"switch:0":{"id":0,"output":false},"sys":{"mac":"A8032AB12345","uptime":7200,"available_updates":{"beta":{"version":"1.5.0-beta1"},"stable":{"version":"1.4.5"}}},
+		fmt.Fprint(w, `{"switch:0":{"id":0,"source":"init","output":true,"apower":12.3,"voltage":230.1,"current":0.054,"aenergy":{"total":12345.6,"by_minute":[1,2,3],"minute_ts":1},"temperature":{"tC":45.2,"tF":113.4}},
+			"input:0":{"id":0,"state":false},"eth":{"ip":null},"sys":{"mac":"A8032AB12345","uptime":7200,"available_updates":{"beta":{"version":"1.5.0-beta1"},"stable":{"version":"1.4.5"}}},
 			"wifi":{"sta_ip":"192.168.1.30","status":"got ip","ssid":"Haus","rssi":-55},"cloud":{"connected":true}}`)
+	})
+	mux.HandleFunc("/rpc/Shelly.GetConfig", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"switch:0":{"id":0,"name":"Torantrieb"},"input:0":{"id":0,"name":null},"cloud":{"enable":true,"server":"shelly-103-eu.shelly.cloud:6022/jrpc"},"sys":{"device":{"name":"Garage"}}}`)
 	})
 	return httptest.NewServer(mux)
 }
@@ -441,5 +448,156 @@ func TestRediscovererThrottle(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if len(runs) != 1 {
 		t.Fatalf("Neusuche %d-mal statt einmal", len(runs))
+	}
+}
+
+func findComp(t *testing.T, d *Detail, kind string, id int) Component {
+	t.Helper()
+	if d == nil {
+		t.Fatal("kein Detail")
+	}
+	for _, c := range d.Components {
+		if c.Kind == kind && c.ID == id {
+			return c
+		}
+	}
+	t.Fatalf("Komponente %s:%d fehlt in %+v", kind, id, d.Components)
+	return Component{}
+}
+
+func val(c Component, label string) any {
+	for _, v := range c.Values {
+		if v.Label == label {
+			return v.V
+		}
+	}
+	return nil
+}
+
+func TestDetailGen2(t *testing.T) {
+	srv := fakeGen2(t, false)
+	defer srv.Close()
+	d, err := newProber(testConfig(""), nil).probeFull(context.Background(), host(srv), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sw := findComp(t, d.Detail, "switch", 0)
+	if sw.On == nil || !*sw.On || sw.Name != "Torantrieb" || val(sw, "Leistung") != 12.3 ||
+		val(sw, "Energie gesamt") != 12.346 || val(sw, "Temperatur") != 45.2 || val(sw, "tF") != nil {
+		t.Fatalf("switch:0 = %+v", sw)
+	}
+	for _, v := range sw.Values {
+		if strings.Contains(v.Label, "minute") || v.Label == "source" {
+			t.Fatalf("Rauschen nicht gefiltert: %+v", v)
+		}
+	}
+	in := findComp(t, d.Detail, "input", 0)
+	if in.On == nil || *in.On {
+		t.Fatalf("input:0 = %+v", in)
+	}
+	for _, c := range d.Detail.Components {
+		if c.Kind == "eth" || c.Kind == "wifi" || c.Kind == "sys" || c.Kind == "cloud" {
+			t.Fatalf("Systemkomponente als Kanal: %+v", c)
+		}
+	}
+	if d.Detail.CloudSrv != "shelly-103-eu.shelly.cloud:6022/jrpc" || d.Detail.CloudOn == nil || !*d.Detail.CloudOn ||
+		d.Detail.CloudConn == nil || !*d.Detail.CloudConn {
+		t.Fatalf("Cloud: %+v", d.Detail)
+	}
+	if d.Wired {
+		t.Fatal("WLAN-Gerät als LAN erkannt")
+	}
+
+	// Poll (ohne Config) darf Namen und Cloud-Server nicht verlieren
+	st := newStore(testConfig(""))
+	st.apply(d, "scan")
+	d2, _ := newProber(testConfig(""), nil).probe(context.Background(), host(srv))
+	if d2.Detail.CloudSrv != "" {
+		t.Fatal("Poll sollte keine Config lesen")
+	}
+	st.apply(d2, "poll")
+	got, _ := st.get(d.MAC)
+	if findComp(t, got.Detail, "switch", 0).Name != "Torantrieb" || got.Detail.CloudSrv == "" {
+		t.Fatalf("Namen/Server nach Poll verloren: %+v", got.Detail)
+	}
+	if l := st.list(); l[0].Detail != nil {
+		t.Fatal("Übersicht soll keine Messwerte mitschicken")
+	}
+}
+
+func TestDetailGen1(t *testing.T) {
+	srv := fakeGen1(t, false)
+	defer srv.Close()
+	d, err := newProber(testConfig(""), nil).probe(context.Background(), host(srv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sw := findComp(t, d.Detail, "switch", 0)
+	// meters.total ist in Wattminuten: 600000 Wmin = 10 kWh
+	if sw.On == nil || !*sw.On || sw.Name != "Deckenlampe" || val(sw, "Leistung") != 42.5 || val(sw, "Energie gesamt") != 10.0 {
+		t.Fatalf("Relais: %+v", sw)
+	}
+	in := findComp(t, d.Detail, "input", 0)
+	if in.On == nil || !*in.On {
+		t.Fatalf("Eingang: %+v", in)
+	}
+	if val(findComp(t, d.Detail, "sensor", 0), "Gerätetemperatur") != 51.3 {
+		t.Fatalf("Sensor: %+v", d.Detail.Components)
+	}
+	if d.Detail.CloudOn == nil || !*d.Detail.CloudOn || *d.Detail.CloudConn {
+		t.Fatalf("Cloud: %+v", d.Detail)
+	}
+}
+
+func TestDetailEM3Phases(t *testing.T) {
+	raw := json.RawMessage(`{"em:0":{"id":0,"a_current":1.2,"a_voltage":231.4,"a_act_power":250,"b_act_power":-80,"total_act_power":170},
+		"emdata:0":{"id":0,"total_act":123456,"total_act_ret":7890},"sys":{"uptime":5}}`)
+	cs := gen2Components(raw)
+	em := cs[0]
+	if em.Kind != "em" || val(em, "L1 Spannung") != 231.4 || val(em, "L2 Wirkleistung") != -80.0 || val(em, "Gesamtleistung") != 170.0 {
+		t.Fatalf("em:0 = %+v", em)
+	}
+	if val(cs[1], "Energie gesamt") != 123.456 || val(cs[1], "Einspeisung gesamt") != 7.89 {
+		t.Fatalf("emdata:0 = %+v", cs[1])
+	}
+}
+
+func TestDeviceAPI(t *testing.T) {
+	srv := fakeGen2(t, false)
+	defer srv.Close()
+	cfg := testConfig("")
+	st := newStore(cfg)
+	pr := newProber(cfg, st)
+	d, _ := pr.probe(context.Background(), host(srv))
+	st.apply(d, "scan")
+	web := httptest.NewServer((&Web{cfg: cfg, st: st, pr: pr, sc: newScanner(cfg, pr)}).handler())
+	defer web.Close()
+
+	resp, err := http.Get(web.URL + "/api/devices/a8:03:2a:b1:23:45")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Device
+		LiveError string `json:"live_error"`
+	}
+	json.NewDecoder(resp.Body).Decode(&got)
+	resp.Body.Close()
+	if got.LiveError != "" || got.Detail == nil || got.Detail.CloudSrv == "" || findComp(t, got.Detail, "switch", 0).Name != "Torantrieb" {
+		t.Fatalf("Detail-API: %+v", got)
+	}
+	if r, _ := http.Get(web.URL + "/api/devices/000000000000"); r.StatusCode != http.StatusNotFound {
+		t.Fatalf("unbekanntes Gerät: %d", r.StatusCode)
+	}
+}
+
+func TestValueOrder(t *testing.T) {
+	cs := gen2Components(json.RawMessage(`{"switch:0":{"aenergy":{"total":1000},"voltage":230,"apower":5,"temperature":{"tC":40},"current":0.1}}`))
+	var got []string
+	for _, v := range cs[0].Values {
+		got = append(got, v.Label)
+	}
+	if want := "Leistung,Spannung,Strom,Energie gesamt,Temperatur"; strings.Join(got, ",") != want {
+		t.Fatalf("Reihenfolge %v, will %s", got, want)
 	}
 }

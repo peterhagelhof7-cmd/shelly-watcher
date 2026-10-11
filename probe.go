@@ -180,6 +180,12 @@ type shellyInfo struct {
 }
 
 func (p *Prober) probe(ctx context.Context, ip string) (*Device, error) {
+	return p.probeFull(ctx, ip, false)
+}
+
+// probeFull fragt zusätzlich die Konfiguration ab (Kanalnamen, Cloud-Server
+// bei Gen2+). Das braucht nur die Detailseite, nicht der minütliche Poll.
+func (p *Prober) probeFull(ctx context.Context, ip string, withConfig bool) (*Device, error) {
 	var si shellyInfo
 	if err := p.get(ctx, ip, "/shelly", authNone, &si); err != nil {
 		var se statusErr
@@ -198,11 +204,19 @@ func (p *Prober) probe(ctx context.Context, ip string) (*Device, error) {
 			d.AuthStatus = "missing"
 			return d, nil
 		}
-		var st gen2Status
-		if err := p.get(ctx, ip, "/rpc/Shelly.GetStatus", authDigest, &st); err != nil {
+		var raw json.RawMessage
+		if err := p.get(ctx, ip, "/rpc/Shelly.GetStatus", authDigest, &raw); err != nil {
 			return p.partial(d, err)
 		}
-		d.applyGen2Status(&st)
+		d.applyGen2Raw(raw)
+		if withConfig && d.Detail != nil {
+			var cfgRaw json.RawMessage
+			if err := p.get(ctx, ip, "/rpc/Shelly.GetConfig", authDigest, &cfgRaw); err == nil {
+				names, on, srv := gen2Config(cfgRaw)
+				applyNames(d.Detail, names)
+				d.Detail.CloudOn, d.Detail.CloudSrv = on, srv
+			}
+		}
 		d.AuthStatus = authOK(si.AuthEn)
 		return d, nil
 	}
@@ -216,15 +230,20 @@ func (p *Prober) probe(ctx context.Context, ip string) (*Device, error) {
 		d.AuthStatus = "missing"
 		return d, nil
 	}
-	var set gen1Settings
-	if err := p.get(ctx, ip, "/settings", authBasic, &set); err != nil {
+	var setRaw, stRaw json.RawMessage
+	if err := p.get(ctx, ip, "/settings", authBasic, &setRaw); err != nil {
 		return p.partial(d, err)
 	}
-	var st gen1Status
-	if err := p.get(ctx, ip, "/status", authBasic, &st); err != nil {
+	if err := p.get(ctx, ip, "/status", authBasic, &stRaw); err != nil {
 		return p.partial(d, err)
+	}
+	var set gen1Settings
+	var st gen1Status
+	if json.Unmarshal(setRaw, &set) != nil || json.Unmarshal(stRaw, &st) != nil {
+		return p.partial(d, errors.New("ungültige Antwort"))
 	}
 	d.applyGen1(&set, &st)
+	d.Detail = gen1Detail(stRaw, setRaw)
 	d.AuthStatus = authOK(si.Auth)
 	return d, nil
 }
@@ -388,6 +407,9 @@ type gen2Status struct {
 	Cloud *struct {
 		Connected bool `json:"connected"`
 	} `json:"cloud"`
+	Eth *struct {
+		IP *string `json:"ip"`
+	} `json:"eth"`
 	DevPower *struct {
 		Battery struct {
 			Percent *int `json:"percent"`
@@ -405,6 +427,21 @@ func (d *Device) applyGen2Info(si *shellyInfo) {
 	d.FW = si.FWID
 	d.FWVersion = si.Ver
 	d.AuthEnable = si.AuthEn
+}
+
+// applyGen2Raw wertet einen kompletten Shelly.GetStatus aus (Poll und WS).
+func (d *Device) applyGen2Raw(raw json.RawMessage) {
+	var st gen2Status
+	if json.Unmarshal(raw, &st) != nil {
+		return
+	}
+	d.applyGen2Status(&st)
+	d.Detail = &Detail{Components: gen2Components(raw), At: time.Now()}
+	if st.Cloud != nil {
+		c := st.Cloud.Connected
+		d.Detail.CloudConn = &c
+	}
+	d.Wired = st.Eth != nil && st.Eth.IP != nil && (st.Wifi == nil || st.Wifi.RSSI == nil)
 }
 
 func (d *Device) applyGen2Status(st *gen2Status) {

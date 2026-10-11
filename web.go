@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/subtle"
 	"embed"
 	"encoding/csv"
@@ -30,6 +31,7 @@ func (w *Web) handler() http.Handler {
 	mux.HandleFunc("GET /api/devices.csv", w.devicesCSV)
 	mux.HandleFunc("POST /api/scan", w.scan)
 	mux.HandleFunc("POST /api/probe", w.probe)
+	mux.HandleFunc("GET /api/devices/{mac}", w.device)
 	mux.HandleFunc("DELETE /api/devices/{mac}", w.forget)
 	mux.HandleFunc("GET /healthz", func(rw http.ResponseWriter, _ *http.Request) { rw.Write([]byte("ok\n")) })
 	mux.Handle("GET /ws", w.wsServer())
@@ -136,6 +138,40 @@ func (w *Web) probe(rw http.ResponseWriter, r *http.Request) {
 	w.st.apply(d, "manuell")
 	rw.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(rw).Encode(d)
+}
+
+// device liefert ein Gerät mit Schaltzuständen und Messwerten. Ist es
+// erreichbar, wird vorher live abgefragt (inkl. Kanalnamen und Cloud-Server).
+func (w *Web) device(rw http.ResponseWriter, r *http.Request) {
+	mac := r.PathValue("mac")
+	d, ok := w.st.get(mac)
+	if !ok {
+		http.NotFound(rw, r)
+		return
+	}
+	liveErr := ""
+	if d.IP != "" && d.Status == "online" {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*w.cfg.HTTPTimeout)
+		obs, err := w.pr.probeFull(ctx, d.IP, true)
+		cancel()
+		switch {
+		case err != nil:
+			liveErr = err.Error()
+		case normMAC(obs.MAC) != d.MAC:
+			liveErr = "unter " + d.IP + " antwortet inzwischen ein anderes Gerät"
+		default:
+			w.st.apply(obs, "poll")
+			d, _ = w.st.get(mac)
+		}
+	}
+	resp := struct {
+		Device
+		LiveError string    `json:"live_error,omitempty"`
+		Now       time.Time `json:"now"`
+	}{d, liveErr, time.Now()}
+	rw.Header().Set("Content-Type", "application/json")
+	rw.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(rw).Encode(resp)
 }
 
 func (w *Web) forget(rw http.ResponseWriter, r *http.Request) {

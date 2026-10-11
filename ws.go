@@ -122,20 +122,22 @@ func (w *Web) handleWS(conn *websocket.Conn) {
 				w.st.apply(d, "ws")
 			}
 		case f.ID%10 == rpcStatus && f.Result != nil:
-			var st gen2Status
-			if json.Unmarshal(f.Result, &st) == nil {
-				d.applyGen2Status(&st)
-				if d.MAC != "" {
-					w.st.apply(d, "ws")
-				}
+			d.applyGen2Raw(f.Result)
+			if d.MAC != "" {
+				w.st.apply(d, "ws")
 			}
 		case f.Method == "NotifyFullStatus" || f.Method == "NotifyStatus":
 			// Lebenszeichen; bei FullStatus auch die Werte übernehmen.
 			if f.Method == "NotifyFullStatus" && len(f.Params) > 0 {
-				var st gen2Status
-				if json.Unmarshal(f.Params, &st) == nil {
-					d.applyGen2Status(&st)
+				// Status steht direkt in params; manche Firmware legt ihn unter params.status ab
+				raw := f.Params
+				var p struct {
+					Status json.RawMessage `json:"status"`
 				}
+				if json.Unmarshal(f.Params, &p) == nil && len(p.Status) > 0 {
+					raw = p.Status
+				}
+				d.applyGen2Raw(raw)
 			}
 			if d.MAC != "" {
 				w.st.apply(d, "ws")

@@ -47,6 +47,23 @@ a{color:var(--link);text-decoration:none}a:hover{text-decoration:underline}
 .fwrow{display:flex;justify-content:space-between;gap:8px;font-size:13px;border-top:1px solid var(--line);margin-top:4px;padding-top:4px}
 footer{color:var(--muted);font-size:12px;padding:16px;text-align:center}
 #msg{color:var(--link);font-size:13px}
+/* WLAN-Qualität */
+.w-good{color:var(--ok)}.w-ok{color:var(--warn)}.w-bad{color:var(--bad)}
+.bars{display:inline-flex;align-items:flex-end;gap:2px;height:12px;margin-right:6px;vertical-align:-1px}
+.bars i{display:block;width:3px;background:currentColor;border-radius:1px;opacity:.25}
+.bars i.on{opacity:1}
+.bars i:nth-child(1){height:4px}.bars i:nth-child(2){height:7px}.bars i:nth-child(3){height:10px}.bars i:nth-child(4){height:12px}
+/* Detailseite */
+.dlink{color:var(--fg)}.dlink:hover{color:var(--link)}
+.dgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+.card{background:var(--card);border-radius:12px;padding:14px 16px}
+.card h3{margin:0 0 8px;font-size:15px;display:flex;justify-content:space-between;gap:8px;align-items:center}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:14px;margin:0}
+.kv dt{color:var(--muted)}.kv dd{margin:0;word-break:break-word}
+.onoff{font-size:12px;font-weight:600;padding:2px 10px;border-radius:999px;white-space:nowrap}
+.onoff.on{background:var(--ok);color:#0d1428}.onoff.off{background:var(--nav);color:var(--muted)}
+.hint{color:var(--muted);font-size:12px;margin-top:8px}
+.back{margin-bottom:12px}
 </style>
 </head>
 <body>
@@ -58,7 +75,8 @@ footer{color:var(--muted);font-size:12px;padding:16px;text-align:center}
     <a href="api/devices.csv"><button>CSV-Export</button></a>
   </div>
 </header>
-<main>
+<main id="detail" hidden></main>
+<main id="list">
   <div class="tiles" id="tiles"></div>
 
   <div class="bar">
@@ -95,7 +113,7 @@ const ipNum = ip => (ip || "").split(".").reduce((a, b) => a * 256 + (+b || 0), 
 const sortVal = {
   status: d => d.status, name: d => (d.name || "").toLowerCase(), model: d => d.model_name || d.model,
   gen: d => d.gen, fw: d => d.fw_version, upd: d => d.fw_outdated ? 0 : 1, ip: d => ipNum(d.ip),
-  mac: d => d.mac, rssi: d => d.rssi ?? -999, uptime: d => d.uptime || 0, seen: d => d.last_seen, src: d => d.sources.join()
+  mac: d => d.mac, rssi: d => d.wired ? 1 : d.rssi ?? -999, uptime: d => d.uptime || 0, seen: d => d.last_seen, src: d => d.sources.join()
 };
 
 function ago(t) {
@@ -125,6 +143,21 @@ function fwState(d) {
   return '<span class="badge b-ok">aktuell</span>';
 }
 
+// WLAN-Qualität: gut ab -67 dBm, ausreichend bis -79 dBm, darunter schlecht
+function wifiQ(r) {
+  if (r == null) return null;
+  if (r >= -67) return {cls: "w-good", txt: "gut", bars: r >= -55 ? 4 : 3};
+  if (r >= -79) return {cls: "w-ok", txt: "ausreichend", bars: 2};
+  return {cls: "w-bad", txt: "schlecht", bars: 1};
+}
+function wifiCell(d) {
+  if (d.wired) return '<span class="w-good" title="per LAN-Kabel verbunden">LAN</span>';
+  const q = wifiQ(d.rssi);
+  if (!q) return "";
+  const bars = [1, 2, 3, 4].map(i => `<i class="${i <= q.bars ? "on" : ""}"></i>`).join("");
+  return `<span class="${q.cls}" title="WLAN ${q.txt} (gut ≥ −67 dBm, ausreichend ≥ −79 dBm, darunter schlecht)"><span class="bars">${bars}</span>${d.rssi} dBm</span>`;
+}
+
 const filters = {
   all: ["Geräte", () => true],
   online: ["online", d => d.status === "online"],
@@ -150,14 +183,14 @@ function render() {
 
   $("#rows").innerHTML = list.length ? list.map(d => `<tr title="${esc(d.last_error)}" class="${d.fw_outdated ? "old" : ""}">
     <td><span class="dot ${d.status}"></span>${stText[d.status] || d.status}</td>
-    <td>${esc(d.name) || '<span class="mute">–</span>'}<div class="mute mono">${esc(d.id)}</div></td>
+    <td><a class="dlink" href="#/geraet/${esc(d.mac)}">${esc(d.name) || '<span class="mute">(ohne Name)</span>'}</a><div class="mute mono">${esc(d.id)}</div></td>
     <td>${esc(d.model_name) || '<span class="mute">unbekannt</span>'}<div class="mute mono">${esc(d.model)}</div></td>
     <td>${d.gen || ""}</td>
     <td class="mono">${esc(d.fw_version)}<div class="mute" style="font-size:11px">${esc(d.fw)}</div></td>
     <td>${fwState(d)}${d.fw_beta ? `<div><span class="badge b-beta">Beta ${esc(d.fw_beta)}</span></div>` : ""} ${authBadge(d)}</td>
     <td class="mono">${d.ip ? `<a href="http://${esc(d.ip)}/" target="_blank" rel="noopener">${esc(d.ip)}</a>` : ""}</td>
     <td class="mono">${esc(d.mac.match(/../g)?.join(":"))}</td>
-    <td>${d.rssi != null ? d.rssi + " dBm" : ""}<div class="mute">${esc(d.ssid)}</div>${d.battery != null ? `<div class="mute">🔋 ${d.battery} %</div>` : ""}</td>
+    <td>${wifiCell(d)}<div class="mute">${esc(d.ssid)}</div>${d.battery != null ? `<div class="mute">🔋 ${d.battery} %</div>` : ""}</td>
     <td>${dur(d.uptime)}</td>
     <td>${ago(d.last_seen)}</td>
     <td class="mute">${d.sources.map(esc).join(", ")}</td>
@@ -187,6 +220,109 @@ function render() {
     (data.fw_list_fetched && !data.fw_list_fetched.startsWith("0001") ? "Gen1-Firmwareliste vom " + new Date(data.fw_list_fetched).toLocaleString("de-DE")
       : data.fw_list_error ? "Gen1-Firmwareliste nicht abrufbar" : "Gen1-Firmwareliste deaktiviert/ausstehend");
 }
+
+// ---------- Detailseite ----------
+const kindName = {
+  switch: "Schalter", light: "Licht", rgb: "RGB-Licht", rgbw: "RGBW-Licht", cct: "Weißlicht", rgbcct: "RGB-CCT-Licht",
+  cover: "Rollladen", input: "Eingang", pm1: "Leistungsmesser", em: "Energiemesser", em1: "Energiemesser",
+  emdata: "Energiezähler", em1data: "Energiezähler", temperature: "Temperatur", humidity: "Luftfeuchte",
+  illuminance: "Helligkeit", devicepower: "Stromversorgung", smoke: "Rauchmelder", flood: "Wassermelder",
+  voltmeter: "Spannungsmesser", presence: "Anwesenheit", sensor: "Sensoren", button: "Taster",
+};
+const coverState = {open: "offen", closed: "geschlossen", opening: "öffnet", closing: "schließt", stopped: "gestoppt", stop: "gestoppt", calibrating: "kalibriert"};
+function fmtVal(v) {
+  if (v.v === true) return "ja";
+  if (v.v === false) return "nein";
+  if (typeof v.v === "number") return v.v.toLocaleString("de-DE", {maximumFractionDigits: 3}) + (v.unit ? " " + v.unit : "");
+  return esc(v.v) + (v.unit ? " " + v.unit : "");
+}
+const yn = b => b == null ? "unbekannt" : b ? "ja" : "nein";
+let detailTimer = null, detailMac = null;
+
+async function loadDetail() {
+  if (!detailMac) return;
+  const mac = detailMac;
+  try {
+    const r = await fetch("api/devices/" + encodeURIComponent(mac), {cache: "no-store"});
+    if (mac !== detailMac) return; // inzwischen weiternavigiert
+    if (r.status === 404) { $("#detail").innerHTML = '<p>Gerät nicht gefunden. <a href="#/">Zur Übersicht</a></p>'; return; }
+    if (r.ok) renderDetail(await r.json());
+  } catch (e) { /* nächster Versuch beim nächsten Intervall */ }
+}
+
+function renderDetail(d) {
+  data.now = d.now;
+  const det = d.detail || {components: []};
+  const q = wifiQ(d.rssi);
+  const kv = rows => `<dl class="kv">${rows.filter(r => r[1] !== "" && r[1] != null).map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>`;
+  const comps = det.components.map(c => {
+    const badge = c.on != null ? `<span class="onoff ${c.on ? "on" : "off"}">${c.kind === "input" ? (c.on ? "aktiv" : "inaktiv") : (c.on ? "EIN" : "AUS")}</span>`
+      : c.state ? `<span class="onoff off">${esc(coverState[c.state] || c.state)}</span>` : "";
+    const title = (kindName[c.kind] || c.kind) + (det.components.filter(o => o.kind === c.kind).length > 1 ? " " + (c.id + 1) : "");
+    return `<div class="card"><h3><span>${esc(c.name) || title}${c.name ? ` <span class="mute" style="font-weight:400;font-size:12px">${title}</span>` : ""}</span>${badge}</h3>
+      ${c.values?.length ? kv(c.values.map(v => [esc(v.label), fmtVal(v)])) : '<div class="mute">keine Messwerte</div>'}</div>`;
+  }).join("");
+  const stale = d.status !== "online" || d.live_error;
+
+  $("#detail").innerHTML = `
+    <button class="back" onclick="location.hash='#/'">← Übersicht</button>
+    <h2 style="margin-top:0"><span class="dot ${d.status}"></span>${esc(d.name) || esc(d.model_name) || esc(d.mac)}
+      <span class="mute" style="font-weight:400;font-size:14px">${esc(d.model_name)} · Gen ${d.gen || "?"}</span></h2>
+    ${stale ? `<p class="hint">${d.live_error ? "Live-Abfrage fehlgeschlagen: " + esc(d.live_error) + " – " : ""}${d.status === "sleeping" ? "Akkugerät schläft – " : ""}angezeigt wird der letzte bekannte Stand${det.at ? " vom " + new Date(det.at).toLocaleString("de-DE") : ""}.</p>` : ""}
+    <h2>Kanäle &amp; Messwerte</h2>
+    <div class="dgrid">${comps || `<div class="card mute">${d.auth_status === "missing" || d.auth_status === "failed" ? "Ohne gültiges Shelly-Passwort sind keine Messwerte lesbar." : "Noch keine Messwerte vorhanden."}</div>`}</div>
+    <h2>Gerät</h2>
+    <div class="dgrid">
+      <div class="card"><h3>Allgemein</h3>${kv([
+        ["Status", stText[d.status] || d.status],
+        ["Modell", `${esc(d.model_name)} <span class="mono mute">${esc(d.model)}</span>`],
+        ["Generation", d.gen],
+        ["Geräte-ID", d.id ? `<span class="mono">${esc(d.id)}</span>` : ""],
+        ["IP", d.ip ? `<a href="http://${esc(d.ip)}/" target="_blank" rel="noopener">${esc(d.ip)}</a>` : ""],
+        ["MAC", `<span class="mono">${esc(d.mac.match(/../g)?.join(":"))}</span>`],
+        ["Laufzeit", dur(d.uptime) || "–"],
+        ["Zuletzt gesehen", ago(d.last_seen)],
+        ["Zuerst gesehen", new Date(d.first_seen).toLocaleString("de-DE")],
+        ["Gefunden via", d.sources.map(esc).join(", ")],
+        ["Passwortschutz", d.auth_enabled ? (d.auth_status === "ok" ? "ja, Passwort passt" : d.auth_status === "failed" ? "ja, Passwort falsch" : "ja, Passwort fehlt") : "nein"],
+        ["Batterie", d.battery != null ? d.battery + " %" : ""],
+      ])}</div>
+      <div class="card"><h3>Firmware</h3>${kv([
+        ["Version", `<span class="mono">${esc(d.fw_version)}</span>`],
+        ["Build", `<span class="mono mute" style="font-size:11px">${esc(d.fw)}</span>`],
+        ["Status", fwState(d)],
+        ["Beta verfügbar", esc(d.fw_beta)],
+      ])}</div>
+      <div class="card"><h3>Netzwerk</h3>${kv(d.wired ? [["Verbindung", '<span class="w-good">LAN-Kabel</span>']] : [
+        ["WLAN", esc(d.ssid)],
+        ["Signal", q ? wifiCell(d) : "unbekannt"],
+        ["Qualität", q ? `<span class="${q.cls}">${q.txt}</span>` : ""],
+      ])}</div>
+      <div class="card"><h3>Shelly Cloud</h3>${kv([
+        ["Aktiviert", yn(det.cloud_enabled)],
+        ["Verbunden", yn(det.cloud_connected ?? d.cloud)],
+        ["Cloud-Server", det.cloud_server ? `<span class="mono">${esc(det.cloud_server.replace(/:\d+.*$/, ""))}</span>` : (d.gen === 1 ? "bei Gen1 lokal nicht lesbar" : "")],
+        ["Konto", '<span class="mute">lokal nicht lesbar</span>'],
+      ])}<div class="hint">Mit welchem Shelly-Konto ein Gerät verknüpft ist, gibt das Gerät über seine lokale Schnittstelle nicht preis. Der Cloud-Server zeigt, auf welchem Shelly-Server das Konto liegt.</div></div>
+    </div>`;
+}
+
+function route() {
+  const m = location.hash.match(/^#\/geraet\/([0-9A-Fa-f]{12})$/);
+  clearInterval(detailTimer);
+  detailMac = m ? m[1].toUpperCase() : null;
+  $("#list").hidden = !!detailMac;
+  $("#detail").hidden = !detailMac;
+  if (detailMac) {
+    $("#detail").innerHTML = '<p class="mute">Lade …</p>';
+    loadDetail();
+    detailTimer = setInterval(loadDetail, 10000);
+    window.scrollTo(0, 0);
+  } else {
+    load();
+  }
+}
+window.addEventListener("hashchange", route);
 
 async function load() {
   try {
@@ -228,8 +364,8 @@ $("#add").addEventListener("submit", async e => {
   load();
 });
 
-load();
-setInterval(load, 15000);
+route();
+setInterval(() => { if (!detailMac) load(); }, 15000);
 </script>
 </body>
 </html>
