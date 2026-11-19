@@ -1,6 +1,6 @@
 module github.com/peterhagelhof7-cmd/shelly-watcher
 
-go 1.27.2
+go 1.27.4
 
 require golang.org/x/net v0.61.0
 
