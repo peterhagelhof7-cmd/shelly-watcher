@@ -272,7 +272,7 @@ async function loadDetail() {
     const r = await fetch("api/devices/" + encodeURIComponent(mac), {cache: "no-store"});
     if (mac !== detailMac) return; // inzwischen weiternavigiert
     if (r.status === 404) { $("#detail").innerHTML = '<p>Gerät nicht gefunden. <a href="#/">Zur Übersicht</a></p>'; return; }
-    if (r.ok && !$("#updnow")?.dataset.armed) renderDetail(await r.json());
+    if (r.ok && !$("#updnow")?.dataset.armed && !$("#nmin")) renderDetail(await r.json());
   } catch (e) { /* nächster Versuch beim nächsten Intervall */ }
 }
 
@@ -287,7 +287,26 @@ function lastUpdateText(u) {
 const canUpdate = d => d.status === "online" && !!d.fw_update && d.last_update?.state !== "running" &&
   d.auth_status !== "missing" && d.auth_status !== "failed";
 
+const canRename = d => d.status === "online" && !!d.ip && d.auth_status !== "missing" && d.auth_status !== "failed";
+
 function bindDetail(d) {
+  $("#nmedit")?.addEventListener("click", () => {
+    $("#nmcell").innerHTML = `<input id="nmin" maxlength="64" style="width:14em" placeholder="leer = Name löschen">
+      <button id="nmsave">Speichern</button> <button id="nmcancel">Abbrechen</button><div id="nmmsg"></div>`;
+    const inp = $("#nmin");
+    inp.value = d.name || "";
+    inp.focus();
+    const save = async () => {
+      $("#nmsave").disabled = true;
+      const r = await fetch(`api/devices/${d.mac}/name`, {method: "PUT", headers: {"Content-Type": "application/json"}, body: JSON.stringify({name: inp.value})});
+      if (r.ok) { $("#nmcell").remove(); loadDetail(); return; }
+      $("#nmsave").disabled = false;
+      $("#nmmsg").innerHTML = '<span class="err">' + esc(await r.text()) + "</span>";
+    };
+    $("#nmsave").addEventListener("click", save);
+    inp.addEventListener("keydown", e => { if (e.key === "Enter") save(); if (e.key === "Escape") $("#nmcancel").click(); });
+    $("#nmcancel").addEventListener("click", () => { $("#nmcell").remove(); loadDetail(); });
+  });
   $("#au")?.addEventListener("change", async e => {
     const r = await fetch(`api/devices/${d.mac}/autoupdate`, {method: "PUT", headers: {"Content-Type": "application/json"}, body: JSON.stringify({enabled: e.target.checked})});
     $("#updmsg").innerHTML = r.ok ? (e.target.checked ? "Gerät wird automatisch aktualisiert." : "Gerät ist vom Auto-Update ausgenommen.") : '<span class="err">Speichern fehlgeschlagen</span>';
@@ -328,6 +347,7 @@ function renderDetail(d) {
     <div class="dgrid">
       <div class="card"><h3>Allgemein</h3>${kv([
         ["Status", stText[d.status] || d.status],
+        ["Name", `<span id="nmcell">${esc(d.name) || '<span class="mute">(ohne Name)</span>'}${canRename(d) ? ' <button id="nmedit" style="margin-left:6px">Umbenennen</button>' : ""}</span>`],
         ["Modell", `${esc(d.model_name)} <span class="mono mute">${esc(d.model)}</span>`],
         ["Generation", d.gen],
         ["Geräte-ID", d.id ? `<span class="mono">${esc(d.id)}</span>` : ""],

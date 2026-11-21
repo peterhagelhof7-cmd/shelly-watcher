@@ -35,6 +35,7 @@ func (w *Web) handler() http.Handler {
 	mux.HandleFunc("GET /api/devices/{mac}", w.device)
 	mux.HandleFunc("POST /api/devices/{mac}/update", w.startUpdate)
 	mux.HandleFunc("PUT /api/devices/{mac}/autoupdate", w.setAutoUpdate)
+	mux.HandleFunc("PUT /api/devices/{mac}/name", w.rename)
 	mux.HandleFunc("GET /api/settings", w.settingsGet)
 	mux.HandleFunc("PUT /api/settings", w.settingsPut)
 	mux.HandleFunc("GET /api/info", w.info)

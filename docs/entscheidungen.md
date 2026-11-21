@@ -97,3 +97,11 @@ Laufendes Log nicht offensichtlicher Entscheidungen, neueste unten.
 **Manuelles Update auf der Detailseite** ignoriert Zeitfenster und Ausnahme bewusst, verlangt aber einen zweiten Klick als Bestätigung. Ein `confirm()`-Dialog würde die Seite blockieren.
 
 **Getestet** mit simulierten Gen1- und Gen2-Geräten (Unit-Tests: Erfolg, Fehlschlag mit Pause, Ausschlussgründe, Zeitfenster und Schalter, API) und einem Durchlauf im Browser gegen ein simuliertes Plus 2PM. An echten Geräten ist es noch ungetestet.
+
+## 2026-11-21 – Gerätenamen aus dem Watcher setzen
+
+**Der Name wird auf das Gerät geschrieben, nicht im Watcher gespeichert.** So stimmt er auch auf der Weboberfläche des Shellys und in der Shelly-App. Gen1: `GET /settings?name=…` (Basic-Auth), Gen2+: `Sys.SetConfig` mit `device.name` (Digest). Ein leerer Name löscht ihn (bei Gen2+ als `null`).
+
+**Vor dem Schreiben wird über `/shelly` geprüft, dass unter der IP noch dasselbe Gerät (MAC) antwortet.** Hat der DHCP die IP inzwischen weitergegeben, wird nichts geschrieben. Nur für Geräte, die online sind und ein gültiges Passwort haben. Schlafende Akkugeräte sind nicht erreichbar. Höchstens 64 Zeichen, Steuerzeichen werden entfernt.
+
+**Getestet** mit simulierten Gen1- und Gen2-Geräten (Setzen, Sonderzeichen, Löschen, zu lang, unbekannte MAC, anderes Gerät unter der IP). An echten Geräten und mit Passwortschutz noch ungetestet.

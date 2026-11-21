@@ -207,6 +207,7 @@ Die meisten Werte lassen sich auch in der Oberfläche unter **Einstellungen** ä
 | DELETE | `/api/devices/{mac}` | Gerät vergessen |
 | POST | `/api/devices/{mac}/update` | Firmware-Update sofort auslösen |
 | PUT | `/api/devices/{mac}/autoupdate` (`{"enabled":bool}`) | Gerät vom Auto-Update ausnehmen bzw. wieder aufnehmen |
+| PUT | `/api/devices/{mac}/name` (`{"name":"…"}`) | Gerätenamen auf dem Shelly setzen (leer = löschen) |
 | GET / PUT | `/api/settings` | Einstellungen lesen / ändern |
 | GET | `/api/info` | Version, Laufzeit, Speicher |
 | GET | `/healthz` | Healthcheck |
