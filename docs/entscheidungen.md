@@ -104,4 +104,4 @@ Laufendes Log nicht offensichtlicher Entscheidungen, neueste unten.
 
 **Vor dem Schreiben wird über `/shelly` geprüft, dass unter der IP noch dasselbe Gerät (MAC) antwortet.** Hat der DHCP die IP inzwischen weitergegeben, wird nichts geschrieben. Nur für Geräte, die online sind und ein gültiges Passwort haben. Schlafende Akkugeräte sind nicht erreichbar. Höchstens 64 Zeichen, Steuerzeichen werden entfernt.
 
-**Getestet** mit simulierten Gen1- und Gen2-Geräten (Setzen, Sonderzeichen, Löschen, zu lang, unbekannte MAC, anderes Gerät unter der IP). An echten Geräten und mit Passwortschutz noch ungetestet.
+**Getestet** mit simulierten Gen1- und Gen2-Geräten (Setzen, Sonderzeichen, Löschen, zu lang, unbekannte MAC, anderes Gerät unter der IP). **2026-11-21 mit v1.2.0 auf der DS415+ an echten Geräten erfolgreich getestet** (Name wird übernommen).
